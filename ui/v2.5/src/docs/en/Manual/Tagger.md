@@ -20,6 +20,6 @@ By default male performers are not shown, this can be enabled in the tagger conf
 
 ## Submitting fingerprints
 
-After a scene is saved you will be prompted to submit the fingerprint back to the stash-box instance. This is optional, but can be helpful for other users who have an identical or similar copy which will allow them to be able to match via the fingerprint search. Stash only sends `stash_id` and file fingerprint.
+After a scene is saved you will prompted to submit the fingerprint back to the stash-box instance. This is optional, but can be helpful for other users who have an identical copy who will then be able to match via the fingerprint search. No other information than the `stash_id` and file fingerprint is submitted.
 
 Submitted fingerprints are linked to your account via your stash-box API key and can be managed on the stash-box website. Stash does not store any additional information about submitted fingerprints. If you delete a fingerprint on the stash-box website, it will also be removed from the instance and will no longer be available for matching.
