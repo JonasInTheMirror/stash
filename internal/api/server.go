@@ -37,6 +37,7 @@ import (
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/plugin"
+	"github.com/stashapp/stash/pkg/plugin/hook"
 	"github.com/stashapp/stash/pkg/utils"
 	"github.com/stashapp/stash/ui"
 )
@@ -168,8 +169,9 @@ func Initialize() (*Server, error) {
 		imageService:   imageService,
 		galleryService: galleryService,
 		groupService:   groupService,
-		hookExecutor:   pluginCache,
+		hookExecutor:   &syncHookExecutor{pluginCache: pluginCache},
 	}
+
 
 	gqlSrv := gqlHandler.New(NewExecutableSchema(Config{Resolvers: resolver}))
 	gqlSrv.SetRecoverFunc(recoverFunc)
@@ -667,3 +669,15 @@ func BaseURLMiddleware(next http.Handler) http.Handler {
 func getProxyPrefix(r *http.Request) string {
 	return strings.TrimRight(r.Header.Get("X-Forwarded-Prefix"), "/")
 }
+
+type syncHookExecutor struct {
+	pluginCache *plugin.Cache
+}
+
+func (e *syncHookExecutor) ExecutePostHooks(ctx context.Context, id int, hookType hook.TriggerEnum, input interface{}, inputFields []string) {
+	if e.pluginCache != nil {
+		e.pluginCache.ExecutePostHooks(ctx, id, hookType, input, inputFields)
+	}
+	manager.GetInstance().TriggerCloudSync()
+}
+

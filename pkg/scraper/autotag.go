@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/stashapp/stash/pkg/match"
 	"github.com/stashapp/stash/pkg/models"
@@ -15,7 +18,13 @@ import (
 const (
 	autoTagScraperID   = "builtin_autotag"
 	autoTagScraperName = "Auto Tag"
+
+	// PURIFIED_JAV_CODE_REGEX from user
+	// Handles prefix, digits, and optional part suffix (e.g. -1, -pt1, etc)
+	javCodePattern = `(?i)(?:^|[@_\s])([A-Z]+|[3DSVR]+|[T28]+|[T38]+)-?(\d+[ZE]?)(?:-pt)?-?(\d{1,2})?|([A-Z]+|[3DSVR]+|[T28]+|[T38]+)-?(\d+[ZE]?)(?:-pt)?-?(\d{1,2})?`
 )
+
+var javCodeRE = regexp.MustCompile(javCodePattern)
 
 type autotagScraper struct {
 	txnManager      txn.Manager
@@ -157,11 +166,28 @@ func (s autotagScraper) viaScene(ctx context.Context, _client *http.Client, scen
 			return fmt.Errorf("autotag scraper viaScene: %w", err)
 		}
 
-		if len(performers) > 0 || studio != nil || len(tags) > 0 {
+		// Extract JAV code if possible
+		var dvdCode string
+		filename := filepath.Base(path)
+		match := javCodeRE.FindStringSubmatch(filename)
+		if len(match) > 0 {
+			if match[1] != "" && match[2] != "" {
+				dvdCode = purifyJAVCode(match[1], match[2])
+			} else if match[4] != "" && match[5] != "" {
+				dvdCode = purifyJAVCode(match[4], match[5])
+			}
+		}
+
+		if len(performers) > 0 || studio != nil || len(tags) > 0 || dvdCode != "" {
 			ret = &models.ScrapedScene{
 				Performers: performers,
 				Studio:     studio,
 				Tags:       tags,
+			}
+
+			if dvdCode != "" {
+				code := strings.ToUpper(dvdCode)
+				ret.Code = &code
 			}
 		}
 
@@ -233,6 +259,20 @@ func (s autotagScraper) supports(ty ScrapeContentType) bool {
 
 func (s autotagScraper) supportsURL(url string, ty ScrapeContentType) bool {
 	return false
+}
+
+func (s autotagScraper) String() string {
+	return autoTagScraperName
+}
+
+func purifyJAVCode(prefix, digits string) string {
+	prefix = strings.ToUpper(prefix)
+	// NHDT series (NHDTB, NHDTC, etc) often have 5 digits where the last 2 are sub-scenes
+	// e.g. NHDTB-96404 -> NHDTB-964
+	if strings.HasPrefix(prefix, "NHDT") && len(digits) == 5 {
+		digits = digits[:3]
+	}
+	return prefix + "-" + digits
 }
 
 func (s autotagScraper) spec() Scraper {

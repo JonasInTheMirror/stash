@@ -487,6 +487,10 @@ type Mutation {
   metadataCleanGenerated(input: CleanGeneratedInput!): ID!
   "Identifies scenes using scrapers. Returns the job ID"
   metadataIdentify(input: IdentifyMetadataInput!): ID!
+  "Start a cloud metadata push. Returns the job ID"
+  metadataCloudPush: ID!
+  "Start a cloud metadata pull. Returns the job ID"
+  metadataCloudPull: ID!
 
   "Migrate generated files for the current hash naming"
   migrateHashNaming: ID!

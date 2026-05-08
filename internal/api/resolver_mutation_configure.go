@@ -434,9 +434,39 @@ func (r *mutationResolver) ConfigureGeneral(ctx context.Context, input ConfigGen
 		refreshPluginSource = true
 	}
 
+	r.setConfigString(config.CloudSyncSupabaseURL, input.CloudSyncSupabaseURL)
+	r.setConfigString(config.CloudSyncSupabaseKey, input.CloudSyncSupabaseKey)
+	r.setConfigString(config.CloudSyncSupabaseBucket, input.CloudSyncSupabaseBucket)
+	r.setConfigBool(config.CloudSyncAutoPush, input.CloudSyncAutoPush)
+	// Auto-enable cloud push when supabase credentials become fully configured
+	// and the user didn't explicitly set the flag in this request.
+	if input.CloudSyncAutoPush == nil {
+		if c.GetCloudSyncSupabaseURL() != "" && c.GetCloudSyncSupabaseKey() != "" && c.GetCloudSyncSupabaseBucket() != "" {
+			boolTrue := true
+			r.setConfigBool(config.CloudSyncAutoPush, &boolTrue)
+		}
+	}
+
 	if err := c.Write(); err != nil {
 		return makeConfigGeneralResult(), err
 	}
+
+	// Persist cloud sync settings to SQLite so they are included in cloud sync.
+	repo := manager.GetInstance().Repository
+	_ = repo.WithTxn(ctx, func(ctx context.Context) error {
+		pairs := []struct{ k, v string }{
+			{config.CloudSyncSupabaseURL, c.GetCloudSyncSupabaseURL()},
+			{config.CloudSyncSupabaseKey, c.GetCloudSyncSupabaseKey()},
+			{config.CloudSyncSupabaseBucket, c.GetCloudSyncSupabaseBucket()},
+			{config.CloudSyncAutoPush, fmt.Sprintf("%v", c.GetCloudSyncAutoPush())},
+		}
+		for _, p := range pairs {
+			if err := repo.AppSettings.SetSetting(ctx, p.k, p.v); err != nil {
+				logger.Warnf("failed to persist cloud setting %s to sqlite: %v", p.k, err)
+			}
+		}
+		return nil
+	})
 
 	manager.GetInstance().RefreshConfig()
 	if refreshScraperCache {

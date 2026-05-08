@@ -53,6 +53,8 @@ type ExportTask struct {
 	includeDependencies bool
 
 	DownloadHash string
+
+	shortFilenames bool
 }
 
 type ExportObjectTypeInput struct {
@@ -128,7 +130,9 @@ func (t *ExportTask) Start(ctx context.Context, wg *sync.WaitGroup) {
 
 	startTime := time.Now()
 
-	if t.full {
+	if t.baseDir != "" {
+		// Caller supplied an explicit export target.
+	} else if t.full {
 		t.baseDir = config.GetInstance().GetMetadataPath()
 	} else {
 		var err error
@@ -234,8 +238,10 @@ func (t *ExportTask) zipFiles(w io.Writer) error {
 	walkWarn(t.json.json.Performers, t.zipWalkFunc(u.json.Performers, z))
 	walkWarn(t.json.json.Studios, t.zipWalkFunc(u.json.Studios, z))
 	walkWarn(t.json.json.Groups, t.zipWalkFunc(u.json.Groups, z))
+	walkWarn(t.json.json.Files, t.zipWalkFunc(u.json.Files, z))
 	walkWarn(t.json.json.Scenes, t.zipWalkFunc(u.json.Scenes, z))
 	walkWarn(t.json.json.Images, t.zipWalkFunc(u.json.Images, z))
+	walkWarn(t.json.json.SavedFilters, t.zipWalkFunc(u.json.SavedFilters, z))
 
 	return nil
 }
@@ -610,6 +616,12 @@ func (t *ExportTask) exportScene(ctx context.Context, wg *sync.WaitGroup, jobCha
 		hash := s.OSHash
 
 		fn := newSceneJSON.Filename(s.ID, basename, hash)
+		if t.shortFilenames {
+			if hash == "" {
+				hash = strconv.Itoa(s.ID)
+			}
+			fn = hash + ".json"
+		}
 
 		if err := t.json.saveScene(fn, newSceneJSON); err != nil {
 			logger.Errorf("[scenes] <%s> failed to save json: %v", sceneHash, err)
@@ -743,6 +755,13 @@ func (t *ExportTask) exportImage(ctx context.Context, wg *sync.WaitGroup, jobCha
 		}
 
 		fn := newImageJSON.Filename(filepath.Base(s.Path), s.Checksum)
+		if t.shortFilenames {
+			if s.Checksum != "" {
+				fn = s.Checksum + ".json"
+			} else {
+				fn = strconv.Itoa(s.ID) + ".json"
+			}
+		}
 
 		if err := t.json.saveImage(fn, newImageJSON); err != nil {
 			logger.Errorf("[images] <%s> failed to save json: %v", imageHash, err)
@@ -897,6 +916,9 @@ func (t *ExportTask) exportGallery(ctx context.Context, wg *sync.WaitGroup, jobC
 		}
 
 		fn := newGalleryJSON.Filename(basename, hash)
+		if t.shortFilenames {
+			fn = hash + ".json"
+		}
 
 		if err := t.json.saveGallery(fn, newGalleryJSON); err != nil {
 			logger.Errorf("[galleries] <%s> failed to save json: %v", g.DisplayName(), err)
@@ -970,6 +992,9 @@ func (t *ExportTask) exportPerformer(ctx context.Context, wg *sync.WaitGroup, jo
 		}
 
 		fn := newPerformerJSON.Filename()
+		if t.shortFilenames {
+			fn = strconv.Itoa(p.ID) + ".json"
+		}
 
 		if err := t.json.savePerformer(fn, newPerformerJSON); err != nil {
 			logger.Errorf("[performers] <%s> failed to save json: %v", p.Name, err)
@@ -1044,6 +1069,9 @@ func (t *ExportTask) exportStudio(ctx context.Context, wg *sync.WaitGroup, jobCh
 		}
 
 		fn := newStudioJSON.Filename()
+		if t.shortFilenames {
+			fn = strconv.Itoa(s.ID) + ".json"
+		}
 
 		if err := t.json.saveStudio(fn, newStudioJSON); err != nil {
 			logger.Errorf("[studios] <%s> failed to save json: %v", s.Name, err)
@@ -1134,6 +1162,9 @@ func (t *ExportTask) exportTag(ctx context.Context, wg *sync.WaitGroup, jobChan 
 		}
 
 		fn := newTagJSON.Filename()
+		if t.shortFilenames {
+			fn = strconv.Itoa(thisTag.ID) + ".json"
+		}
 
 		if err := t.json.saveTag(fn, newTagJSON); err != nil {
 			logger.Errorf("[tags] <%s> failed to save json: %v", fn, err)
@@ -1240,6 +1271,9 @@ func (t *ExportTask) exportGroup(ctx context.Context, wg *sync.WaitGroup, jobCha
 		}
 
 		fn := newGroupJSON.Filename()
+		if t.shortFilenames {
+			fn = strconv.Itoa(m.ID) + ".json"
+		}
 
 		if err := t.json.saveGroup(fn, newGroupJSON); err != nil {
 			logger.Errorf("[groups] <%s> failed to save json: %v", m.Name, err)
@@ -1299,6 +1333,9 @@ func (t *ExportTask) exportSavedFilter(ctx context.Context, wg *sync.WaitGroup, 
 		}
 
 		fn := newJSON.Filename()
+		if t.shortFilenames {
+			fn = strconv.Itoa(thisFilter.ID) + ".json"
+		}
 
 		if err := t.json.saveSavedFilter(fn, newJSON); err != nil {
 			logger.Errorf("[saved filter] <%s> failed to save json: %v", fn, err)

@@ -91,6 +91,7 @@ func (j *ScanJob) Execute(ctx context.Context, progress *job.Progress) error {
 	logger.Infof("Scan finished (%s)", elapsed)
 
 	j.subscriptions.notify()
+	GetInstance().TriggerCloudSync()
 	return nil
 }
 

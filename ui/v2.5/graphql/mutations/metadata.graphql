@@ -53,3 +53,11 @@ mutation AnonymiseDatabase($input: AnonymiseDatabaseInput!) {
 mutation OptimiseDatabase {
   optimiseDatabase
 }
+
+mutation MetadataCloudPush {
+  metadataCloudPush
+}
+
+mutation MetadataCloudPull {
+  metadataCloudPull
+}

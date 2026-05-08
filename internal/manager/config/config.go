@@ -32,17 +32,23 @@ import (
 )
 
 const (
-	Stash               = "stash"
-	Cache               = "cache"
-	BackupDirectoryPath = "backup_directory_path"
-	Generated           = "generated"
-	Metadata            = "metadata"
-	BlobsPath           = "blobs_path"
-	Downloads           = "downloads"
-	ApiKey              = "api_key"
-	Username            = "username"
-	Password            = "password"
-	MaxSessionAge       = "max_session_age"
+	Stash                   = "stash"
+	Cache                   = "cache"
+	BackupDirectoryPath     = "backup_directory_path"
+	Generated               = "generated"
+	Metadata                = "metadata"
+	BlobsPath               = "blobs_path"
+	Downloads               = "downloads"
+	ApiKey                  = "api_key"
+	Username                = "username"
+	Password                = "password"
+	MaxSessionAge           = "max_session_age"
+	CloudSyncSupabaseURL    = "cloud_sync.supabase_url"
+	CloudSyncSupabaseKey    = "cloud_sync.supabase_key"
+	CloudSyncSupabaseBucket = "cloud_sync.supabase_bucket"
+	CloudSyncAutoPush       = "cloud_sync.auto_push"
+	CloudSyncLastPushAt     = "cloud_sync.last_push_at"
+	CloudSyncLastPullAt     = "cloud_sync.last_pull_at"
 
 	SignedURLExpiry        = "signed_url_expiry"
 	signedURLExpiryDefault = 60 * 60 * 4 // 4 hours in seconds
@@ -601,6 +607,42 @@ func (i *Config) getStringSlice(key string) []string {
 	defer i.RUnlock()
 
 	return i.forKey(key).Strings(key)
+}
+
+func (i *Config) GetCloudSyncSupabaseURL() string {
+	return i.getString(CloudSyncSupabaseURL)
+}
+
+func (i *Config) GetCloudSyncSupabaseKey() string {
+	return i.getString(CloudSyncSupabaseKey)
+}
+
+func (i *Config) GetCloudSyncSupabaseBucket() string {
+	ret := i.getString(CloudSyncSupabaseBucket)
+	if ret == "" {
+		return "stash-sync"
+	}
+	return ret
+}
+
+func (i *Config) GetCloudSyncAutoPush() bool {
+	return i.getBool(CloudSyncAutoPush)
+}
+
+func (i *Config) GetCloudSyncLastPushAt() string {
+	return i.getString(CloudSyncLastPushAt)
+}
+
+func (i *Config) SetCloudSyncLastPushAt(ts string) {
+	i.SetString(CloudSyncLastPushAt, ts)
+}
+
+func (i *Config) GetCloudSyncLastPullAt() string {
+	return i.getString(CloudSyncLastPullAt)
+}
+
+func (i *Config) SetCloudSyncLastPullAt(ts string) {
+	i.SetString(CloudSyncLastPullAt, ts)
 }
 
 func (i *Config) getString(key string) string {

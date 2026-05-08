@@ -200,10 +200,8 @@ func (t *SceneIdentifier) getSceneUpdater(ctx context.Context, s *models.Scene, 
 
 	studioID, err := rel.studio(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error getting studio: %w", err)
-	}
-
-	if studioID != nil {
+		logger.Errorf("error getting studio for %s: %v", s.Path, err)
+	} else if studioID != nil {
 		ret.Partial.StudioID = models.NewOptionalInt(*studioID)
 	}
 
@@ -228,7 +226,7 @@ func (t *SceneIdentifier) getSceneUpdater(ctx context.Context, s *models.Scene, 
 		if errors.Is(err, ErrSkipSingleNamePerformer) {
 			addSkipSingleNamePerformerTag = true
 		} else {
-			return nil, err
+			logger.Errorf("error getting performers for %s: %v", s.Path, err)
 		}
 	}
 	if performerIDs != nil {
@@ -240,7 +238,7 @@ func (t *SceneIdentifier) getSceneUpdater(ctx context.Context, s *models.Scene, 
 
 	tagIDs, err := rel.tags(ctx)
 	if err != nil {
-		return nil, err
+		logger.Errorf("error getting tags for %s: %v", s.Path, err)
 	}
 	if addSkipSingleNamePerformerTag && options.SkipSingleNamePerformerTag != nil {
 		tagID, err := strconv.ParseInt(*options.SkipSingleNamePerformerTag, 10, 64)
@@ -261,7 +259,7 @@ func (t *SceneIdentifier) getSceneUpdater(ctx context.Context, s *models.Scene, 
 	if options.SetCoverImage == nil || *options.SetCoverImage {
 		ret.CoverImage, err = rel.cover(ctx)
 		if err != nil {
-			return nil, err
+			logger.Errorf("error getting cover image for %s: %v", s.Path, err)
 		}
 	}
 
@@ -270,7 +268,7 @@ func (t *SceneIdentifier) getSceneUpdater(ctx context.Context, s *models.Scene, 
 
 	stashIDs, err := rel.stashIDs(ctx, changed)
 	if err != nil {
-		return nil, err
+		logger.Errorf("error getting stash IDs for %s: %v", s.Path, err)
 	}
 	if stashIDs != nil {
 		ret.Partial.StashIDs = &models.UpdateStashIDs{

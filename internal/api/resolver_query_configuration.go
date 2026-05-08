@@ -138,6 +138,10 @@ func makeConfigGeneralResult() *ConfigGeneralResult {
 		DrawFunscriptHeatmapRange:     config.GetDrawFunscriptHeatmapRange(),
 		ScraperPackageSources:         config.GetScraperPackageSources(),
 		PluginPackageSources:          config.GetPluginPackageSources(),
+		CloudSyncSupabaseURL:          config.GetCloudSyncSupabaseURL(),
+		CloudSyncSupabaseKey:          config.GetCloudSyncSupabaseKey(),
+		CloudSyncSupabaseBucket:       config.GetCloudSyncSupabaseBucket(),
+		CloudSyncAutoPush:             config.GetCloudSyncAutoPush(),
 	}
 }
 

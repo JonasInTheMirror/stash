@@ -94,6 +94,20 @@ func (r *mutationResolver) MetadataIdentify(ctx context.Context, input identify.
 	return strconv.Itoa(jobID), nil
 }
 
+func (r *mutationResolver) MetadataCloudPush(ctx context.Context) (string, error) {
+	t := manager.CreateCloudPushTask()
+	jobID := manager.GetInstance().JobManager.Add(ctx, "Cloud Pushing...", t)
+
+	return strconv.Itoa(jobID), nil
+}
+
+func (r *mutationResolver) MetadataCloudPull(ctx context.Context) (string, error) {
+	t := manager.CreateCloudPullTask()
+	jobID := manager.GetInstance().JobManager.Add(ctx, "Cloud Pulling...", t)
+
+	return strconv.Itoa(jobID), nil
+}
+
 func (r *mutationResolver) MetadataClean(ctx context.Context, input manager.CleanMetadataInput) (string, error) {
 	jobID := manager.GetInstance().Clean(ctx, input)
 	return strconv.Itoa(jobID), nil

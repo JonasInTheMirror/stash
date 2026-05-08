@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	separatorChars   = `.\-_ `
+	separatorChars   = `.\-_ @`
 	separatorPattern = `(?:_|[^\p{L}\w\d])+`
 
 	reNotLetterWordUnicode = `[^\p{L}\w\d]`

@@ -17,6 +17,7 @@ import { SettingsServicesPanel } from "./SettingsServicesPanel";
 import { SettingsContext, useSettings } from "./context";
 import { SettingsLibraryPanel } from "./SettingsLibraryPanel";
 import { SettingsSecurityPanel } from "./SettingsSecurityPanel";
+import { SettingsCloudSyncPanel } from "./SettingsCloudSyncPanel";
 import Changelog from "../Changelog/Changelog";
 import { TroubleshootingModeButton } from "../TroubleshootingMode/TroubleshootingModeButton";
 import { useTroubleshootingMode } from "../TroubleshootingMode/useTroubleshootingMode";
@@ -32,6 +33,7 @@ const validTabs = [
   "plugins",
   "logs",
   "tools",
+  "cloud-sync",
   "changelog",
   "about",
 ] as const;
@@ -126,6 +128,13 @@ const SettingTabs: React.FC<{ tab: TabKey }> = ({ tab }) => {
               </LinkContainer>
             </Nav.Item>
             <Nav.Item>
+              <LinkContainer to="/settings?tab=cloud-sync">
+                <Nav.Link eventKey="cloud-sync">
+                  <FormattedMessage id="config.categories.cloud_sync" />
+                </Nav.Link>
+              </LinkContainer>
+            </Nav.Item>
+            <Nav.Item>
               <LinkContainer to="/settings?tab=changelog">
                 <Nav.Link eventKey="changelog">
                   <FormattedMessage id="config.categories.changelog" />
@@ -179,6 +188,9 @@ const SettingTabs: React.FC<{ tab: TabKey }> = ({ tab }) => {
             </Tab.Pane>
             <Tab.Pane eventKey="tools" unmountOnExit>
               <SettingsToolsPanel />
+            </Tab.Pane>
+            <Tab.Pane eventKey="cloud-sync" unmountOnExit>
+              <SettingsCloudSyncPanel />
             </Tab.Pane>
             <Tab.Pane eventKey="metadata-providers" unmountOnExit>
               <SettingsScrapingPanel />

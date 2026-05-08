@@ -236,6 +236,10 @@ func (s *Manager) postInit(ctx context.Context) error {
 		}
 	}
 
+	if err := s.loadAppSettingsIntoConfig(ctx); err != nil {
+		logger.Warnf("could not load app settings from DB: %v", err)
+	}
+
 	// Set the proxy if defined in config
 	if s.Config.GetProxy() != "" {
 		os.Setenv("HTTP_PROXY", s.Config.GetProxy())
@@ -247,6 +251,24 @@ func (s *Manager) postInit(ctx context.Context) error {
 	s.RefreshFFMpeg(ctx)
 	s.RefreshStreamManager()
 
+	StartJAVRefineCron(ctx)
+	s.TriggerCloudPullOnStartup()
+
+	return nil
+}
+
+func (s *Manager) loadAppSettingsIntoConfig(ctx context.Context) error {
+	var settings map[string]string
+	if err := s.Repository.WithReadTxn(ctx, func(ctx context.Context) error {
+		var err error
+		settings, err = s.Repository.AppSettings.AllSettings(ctx)
+		return err
+	}); err != nil {
+		return fmt.Errorf("reading app_settings: %w", err)
+	}
+	for k, v := range settings {
+		s.Config.SetString(k, v)
+	}
 	return nil
 }
 

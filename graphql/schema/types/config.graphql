@@ -179,6 +179,14 @@ input ConfigGeneralInput {
   stashBoxes: [StashBoxInput!]
   "Python path - resolved using path if unset"
   pythonPath: String
+  "Supabase URL for Cloud Sync"
+  cloudSyncSupabaseURL: String
+  "Supabase Key for Cloud Sync"
+  cloudSyncSupabaseKey: String
+  "Supabase Bucket for Cloud Sync"
+  cloudSyncSupabaseBucket: String
+  "Automatically push to cloud daily"
+  cloudSyncAutoPush: Boolean
 
   "Source of scraper packages"
   scraperPackageSources: [PackageSourceInput!]
@@ -329,6 +337,14 @@ type ConfigGeneralResult {
   stashBoxes: [StashBox!]!
   "Python path - resolved using path if unset"
   pythonPath: String!
+  "Supabase URL for Cloud Sync"
+  cloudSyncSupabaseURL: String!
+  "Supabase Key for Cloud Sync"
+  cloudSyncSupabaseKey: String!
+  "Supabase Bucket for Cloud Sync"
+  cloudSyncSupabaseBucket: String!
+  "Automatically push to cloud daily"
+  cloudSyncAutoPush: Boolean!
 
   "Source of scraper packages"
   scraperPackageSources: [PackageSource!]!

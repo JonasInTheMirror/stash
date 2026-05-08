@@ -276,7 +276,8 @@
       "services": "Services",
       "system": "System",
       "tasks": "Tasks",
-      "tools": "Tools"
+      "tools": "Tools",
+      "cloud_sync": "Cloud Sync"
     },
     "changelog": {
       "header": "Changelog"
@@ -302,6 +303,23 @@
       "until_restart": "until restart",
       "video_sort_order": "Default video sort order",
       "video_sort_order_desc": "Order to sort videos by default."
+    },
+    "cloud_sync": {
+      "heading": "Cloud Sync",
+      "description": "Sync your metadata to Supabase to keep your library in sync across devices.",
+      "supabase_url": "Supabase URL",
+      "supabase_key": "Supabase Key",
+      "supabase_bucket": "Supabase Bucket",
+      "supabase_bucket_description": "Defaults to stash-sync when left blank.",
+      "push_heading": "Push to Cloud",
+      "push_description": "Upload your current library metadata to the cloud.",
+      "push_button": "Push Now",
+      "pull_heading": "Pull from Cloud",
+      "pull_description": "Download metadata from the cloud and merge it into your library.",
+      "pull_button": "Pull Now",
+      "pull_warning": "Warning: Pulling from the cloud will overwrite existing local metadata for videos with the same path and filename.",
+      "auto_push_heading": "Automatic Cloud Push",
+      "auto_push_description": "Automatically push metadata to the cloud every 24 hours."
     },
     "general": {
       "auth": {
