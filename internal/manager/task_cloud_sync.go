@@ -3,15 +3,11 @@ package manager
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,10 +21,9 @@ const (
 	cloudTablePerformers  = "stash_performers"
 	cloudTableStudios     = "stash_studios"
 	cloudTableTags        = "stash_tags"
+	cloudTableScenes      = "stash_scenes"
 	cloudTableAppSettings = "stash_app_settings"
 	cloudBatchSize        = 500
-	cloudStorageSceneDir  = "scenes"
-	cloudMetadataPackage  = "metadata/stash-metadata.zip"
 )
 
 type CloudSyncTask struct {
@@ -47,16 +42,12 @@ func (t *CloudSyncTask) Execute(ctx context.Context, progress *job.Progress) err
 	cfg := config.GetInstance()
 	supabaseURL := cfg.GetCloudSyncSupabaseURL()
 	supabaseKey := cfg.GetCloudSyncSupabaseKey()
-	supabaseBucket := cfg.GetCloudSyncSupabaseBucket()
 
-	if supabaseURL == "" || supabaseKey == "" || supabaseBucket == "" {
-		return fmt.Errorf("Supabase URL, Key, and Bucket must be configured for Cloud Sync")
+	if supabaseURL == "" || supabaseKey == "" {
+		return fmt.Errorf("Supabase URL and Key must be configured for Cloud Sync")
 	}
 
-	c := &cloudClient{url: supabaseURL, key: supabaseKey, bucket: supabaseBucket}
-	if err := c.ensureStorageBucket(ctx); err != nil {
-		return err
-	}
+	c := &cloudClient{url: supabaseURL, key: supabaseKey}
 
 	if t.isPush {
 		return t.push(ctx, progress, c)
@@ -64,71 +55,10 @@ func (t *CloudSyncTask) Execute(ctx context.Context, progress *job.Progress) err
 	return t.pull(ctx, progress, c)
 }
 
-// cloudClient handles Supabase REST calls.
+// cloudClient handles Supabase REST calls directly to Tables over HTTP.
 type cloudClient struct {
-	url    string
-	key    string
-	bucket string
-}
-
-func (c *cloudClient) ensureStorageBucket(ctx context.Context) error {
-	endpoint := fmt.Sprintf("%s/storage/v1/bucket/%s", c.url, url.PathEscape(c.bucket))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return fmt.Errorf("create bucket lookup request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("lookup storage bucket %s: %w", c.bucket, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		return nil
-	}
-	if resp.StatusCode != http.StatusNotFound {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("lookup storage bucket %s failed (%d): %s", c.bucket, resp.StatusCode, string(b))
-	}
-
-	body, err := json.Marshal(map[string]interface{}{
-		"id":     c.bucket,
-		"name":   c.bucket,
-		"public": false,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal bucket create request: %w", err)
-	}
-
-	req, err = http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/storage/v1/bucket", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create bucket request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err = client.Do(req)
-	if err != nil {
-		return fmt.Errorf("create storage bucket %s: %w", c.bucket, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("create storage bucket %s failed (%d): %s", c.bucket, resp.StatusCode, string(b))
-	}
-	return nil
-}
-
-func (c *cloudClient) upsert(ctx context.Context, table string, rows interface{}) error {
-	return c.upsertWithConflict(ctx, table, "", rows)
+	url string
+	key string
 }
 
 func (c *cloudClient) upsertWithConflict(ctx context.Context, table string, onConflict string, rows interface{}) error {
@@ -195,191 +125,10 @@ func (c *cloudClient) fetchSince(ctx context.Context, table, since string) ([]by
 	return io.ReadAll(resp.Body)
 }
 
-func (c *cloudClient) uploadStorageJSON(ctx context.Context, objectPath string, row interface{}) error {
-	body, err := json.Marshal(row)
-	if err != nil {
-		return fmt.Errorf("marshal storage object: %w", err)
-	}
-
-	endpoint := fmt.Sprintf("%s/storage/v1/object/%s/%s", c.url, url.PathEscape(c.bucket), objectPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create storage upload request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-upsert", "true")
-
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("upload storage object %s: %w", objectPath, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upload storage object %s failed (%d): %s", objectPath, resp.StatusCode, string(b))
-	}
-	return nil
-}
-
-func (c *cloudClient) uploadStorageFile(ctx context.Context, objectPath string, filePath string, contentType string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("open storage upload file %s: %w", filePath, err)
-	}
-	defer f.Close()
-
-	endpoint := fmt.Sprintf("%s/storage/v1/object/%s/%s", c.url, url.PathEscape(c.bucket), objectPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, f)
-	if err != nil {
-		return fmt.Errorf("create storage upload request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("x-upsert", "true")
-
-	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("upload storage object %s: %w", objectPath, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upload storage object %s failed (%d): %s", objectPath, resp.StatusCode, string(b))
-	}
-	return nil
-}
-
-func (c *cloudClient) downloadStorageFile(ctx context.Context, objectPath string, filePath string) error {
-	endpoint := fmt.Sprintf("%s/storage/v1/object/%s/%s", c.url, url.PathEscape(c.bucket), objectPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return fmt.Errorf("create storage download request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-
-	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("download storage object %s: %w", objectPath, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("download storage object %s failed (%d): %s", objectPath, resp.StatusCode, string(b))
-	}
-
-	out, err := os.Create(filePath)
-	if err != nil {
-		return fmt.Errorf("create storage download file %s: %w", filePath, err)
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		return fmt.Errorf("write storage download file %s: %w", filePath, err)
-	}
-	return nil
-}
-
-type cloudStorageObject struct {
-	Name      string `json:"name"`
-	UpdatedAt string `json:"updated_at"`
-}
-
-func (c *cloudClient) listStorageObjects(ctx context.Context, prefix string, offset int) ([]cloudStorageObject, error) {
-	body, err := json.Marshal(map[string]interface{}{
-		"prefix": prefix,
-		"limit":  cloudBatchSize,
-		"offset": offset,
-		"sortBy": map[string]string{"column": "name", "order": "asc"},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal storage list request: %w", err)
-	}
-
-	endpoint := fmt.Sprintf("%s/storage/v1/object/list/%s", c.url, url.PathEscape(c.bucket))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create storage list request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("list storage objects: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list storage objects failed (%d): %s", resp.StatusCode, string(b))
-	}
-
-	var objects []cloudStorageObject
-	if err := json.NewDecoder(resp.Body).Decode(&objects); err != nil {
-		return nil, fmt.Errorf("decode storage list response: %w", err)
-	}
-	return objects, nil
-}
-
-func (c *cloudClient) downloadStorageObject(ctx context.Context, objectPath string, row interface{}) error {
-	endpoint := fmt.Sprintf("%s/storage/v1/object/%s/%s", c.url, url.PathEscape(c.bucket), objectPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return fmt.Errorf("create storage download request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("download storage object %s: %w", objectPath, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("download storage object %s failed (%d): %s", objectPath, resp.StatusCode, string(b))
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(row); err != nil {
-		return fmt.Errorf("decode storage object %s: %w", objectPath, err)
-	}
-	return nil
-}
-
-func cloudSceneObjectPath(path string) string {
-	return cloudStorageSceneDir + "/" + base64.RawURLEncoding.EncodeToString([]byte(path)) + ".json"
-}
-
-func cloudStorageObjectPath(prefix string, objectName string) string {
-	if strings.HasPrefix(objectName, prefix+"/") {
-		return objectName
-	}
-	return prefix + "/" + objectName
-}
-
-// Row types
+// Row types corresponding perfectly to your Supabase tables.
 
 type cloudSceneRow struct {
-	Path         string   `json:"path"`
+	ID           int      `json:"id"`
 	Title        string   `json:"title"`
 	Code         string   `json:"code"`
 	Details      string   `json:"details"`
@@ -460,77 +209,44 @@ func tsFilter(since string) *models.TimestampCriterionInput {
 	}
 }
 
-// push serializes all local entities changed since last push and upserts into Supabase.
+// push serializes all local entities changed since last push and upserts into Supabase Tables.
 func (t *CloudSyncTask) push(ctx context.Context, progress *job.Progress, c *cloudClient) error {
 	progress.SetTotal(100)
 	progress.SetProcessed(5)
 
 	cfg := config.GetInstance()
 	now := time.Now().UTC().Format(time.RFC3339)
+	since := "" // Change to cfg.GetCloudSyncLastPushAt() if you want to push only delta updates.
+	repo := GetInstance().Repository
 
-	zipPath, cleanup, err := t.exportMetadataZip(ctx)
-	if err != nil {
-		return err
+	if err := t.pushPerformers(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("push performers failed: %w", err)
 	}
-	defer cleanup()
+	progress.SetProcessed(20)
+
+	if err := t.pushStudios(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("push studios failed: %w", err)
+	}
+	progress.SetProcessed(40)
+
+	if err := t.pushTags(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("push tags failed: %w", err)
+	}
 	progress.SetProcessed(60)
 
-	if err := c.uploadStorageFile(ctx, cloudMetadataPackage, zipPath, "application/zip"); err != nil {
-		return err
+	if err := t.pushScenes(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("push scenes failed: %w", err)
+	}
+	progress.SetProcessed(80)
+
+	if err := t.pushAppSettings(ctx, c, repo); err != nil {
+		return fmt.Errorf("push app settings failed: %w", err)
 	}
 	progress.SetProcessed(100)
 
 	cfg.SetCloudSyncLastPushAt(now)
-	logger.Infof("Cloud Sync push complete: uploaded metadata package to %s/%s", c.bucket, cloudMetadataPackage)
+	logger.Infof("Cloud Sync push complete: synced directly to Supabase tables")
 	return nil
-}
-
-func (t *CloudSyncTask) exportMetadataZip(ctx context.Context) (string, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "stash-cloud-export-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("create cloud export temp dir: %w", err)
-	}
-	cleanup := func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			logger.Warnf("cloud sync: remove export temp dir %s: %v", tmpDir, err)
-		}
-	}
-
-	exportDir := filepath.Join(tmpDir, "metadata")
-	if err := os.MkdirAll(exportDir, 0755); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("create cloud export metadata dir: %w", err)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	task := ExportTask{
-		repository:          GetInstance().Repository,
-		full:                true,
-		baseDir:             exportDir,
-		fileNamingAlgorithm: config.GetInstance().GetVideoFileNamingAlgorithm(),
-		shortFilenames:      true,
-	}
-	task.Start(ctx, &wg)
-	wg.Wait()
-
-	zipPath := filepath.Join(tmpDir, "stash-metadata.zip")
-	z, err := os.Create(zipPath)
-	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("create cloud export zip: %w", err)
-	}
-	if err := task.zipFiles(z); err != nil {
-		z.Close()
-		cleanup()
-		return "", nil, fmt.Errorf("zip cloud export metadata: %w", err)
-	}
-	if err := z.Close(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("close cloud export zip: %w", err)
-	}
-
-	return zipPath, cleanup, nil
 }
 
 func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
@@ -556,21 +272,19 @@ func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo mod
 		}
 
 		for _, s := range scenes {
-			if err := s.LoadRelationships(ctx, repo.Scene); err != nil {
-				logger.Warnf("cloud sync: load scene %d: %v", s.ID, err)
+			// Explicitly load relations before calling .List() to prevent Go panic
+			if err := s.LoadURLs(ctx, repo.Scene); err != nil {
+				logger.Warnf("cloud sync: load scene %d urls: %v", s.ID, err)
 			}
-			if err := s.LoadFiles(ctx, repo.Scene); err != nil {
-				logger.Warnf("cloud sync: load scene %d files: %v", s.ID, err)
-				continue
+			if err := s.LoadTagIDs(ctx, repo.Scene); err != nil {
+				logger.Warnf("cloud sync: load scene %d tags: %v", s.ID, err)
 			}
-			primaryFile := s.Files.Primary()
-			if primaryFile == nil || primaryFile.Path == "" {
-				logger.Warnf("cloud sync: skipping scene %d because it has no primary file path", s.ID)
-				continue
+			if err := s.LoadPerformerIDs(ctx, repo.Scene); err != nil {
+				logger.Warnf("cloud sync: load scene %d performers: %v", s.ID, err)
 			}
 
 			row := cloudSceneRow{
-				Path:         primaryFile.Path,
+				ID:           s.ID,
 				Title:        s.Title,
 				Code:         s.Code,
 				Details:      s.Details,
@@ -594,13 +308,7 @@ func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo mod
 		return err
 	}
 
-	for _, row := range rows {
-		if err := c.uploadStorageJSON(ctx, cloudSceneObjectPath(row.Path), row); err != nil {
-			return err
-		}
-	}
-	logger.Infof("cloud sync: uploaded %d scene objects to bucket %s", len(rows), c.bucket)
-	return nil
+	return upsertBatched(ctx, c, cloudTableScenes, "id", rows)
 }
 
 func (t *CloudSyncTask) pushPerformers(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
@@ -618,8 +326,15 @@ func (t *CloudSyncTask) pushPerformers(ctx context.Context, c *cloudClient, repo
 		}
 
 		for _, p := range performers {
-			if err := p.LoadRelationships(ctx, repo.Performer); err != nil {
-				logger.Warnf("cloud sync: load performer %d: %v", p.ID, err)
+			// Explicitly load relations before calling .List() to prevent Go panic
+			if err := p.LoadURLs(ctx, repo.Performer); err != nil {
+				logger.Warnf("cloud sync: load performer %d urls: %v", p.ID, err)
+			}
+			if err := p.LoadTagIDs(ctx, repo.Performer); err != nil {
+				logger.Warnf("cloud sync: load performer %d tags: %v", p.ID, err)
+			}
+			if err := p.LoadAliases(ctx, repo.Performer); err != nil {
+				logger.Warnf("cloud sync: load performer %d aliases: %v", p.ID, err)
 			}
 
 			row := cloudPerformerRow{
@@ -655,7 +370,7 @@ func (t *CloudSyncTask) pushPerformers(ctx context.Context, c *cloudClient, repo
 		return err
 	}
 
-	return upsertBatched(ctx, c, cloudTablePerformers, "", rows)
+	return upsertBatched(ctx, c, cloudTablePerformers, "id", rows)
 }
 
 func (t *CloudSyncTask) pushStudios(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
@@ -673,8 +388,12 @@ func (t *CloudSyncTask) pushStudios(ctx context.Context, c *cloudClient, repo mo
 		}
 
 		for _, s := range studios {
-			if err := s.LoadRelationships(ctx, repo.Performer); err != nil {
-				logger.Warnf("cloud sync: load studio %d: %v", s.ID, err)
+			// Explicitly load relations before calling .List() to prevent Go panic
+			if err := s.LoadURLs(ctx, repo.Studio); err != nil {
+				logger.Warnf("cloud sync: load studio %d urls: %v", s.ID, err)
+			}
+			if err := s.LoadAliases(ctx, repo.Studio); err != nil {
+				logger.Warnf("cloud sync: load studio %d aliases: %v", s.ID, err)
 			}
 
 			rows = append(rows, cloudStudioRow{
@@ -694,7 +413,7 @@ func (t *CloudSyncTask) pushStudios(ctx context.Context, c *cloudClient, repo mo
 		return err
 	}
 
-	return upsertBatched(ctx, c, cloudTableStudios, "", rows)
+	return upsertBatched(ctx, c, cloudTableStudios, "id", rows)
 }
 
 func (t *CloudSyncTask) pushTags(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
@@ -712,6 +431,7 @@ func (t *CloudSyncTask) pushTags(ctx context.Context, c *cloudClient, repo model
 		}
 
 		for _, tg := range tags {
+			// Explicitly load relations before calling .List() to prevent Go panic
 			if err := tg.LoadAliases(ctx, repo.Tag); err != nil {
 				logger.Warnf("cloud sync: load tag %d aliases: %v", tg.ID, err)
 			}
@@ -739,7 +459,7 @@ func (t *CloudSyncTask) pushTags(ctx context.Context, c *cloudClient, repo model
 		return err
 	}
 
-	return upsertBatched(ctx, c, cloudTableTags, "", rows)
+	return upsertBatched(ctx, c, cloudTableTags, "id", rows)
 }
 
 func upsertBatched[T any](ctx context.Context, c *cloudClient, table string, onConflict string, rows []T) error {
@@ -759,90 +479,55 @@ func upsertBatched[T any](ctx context.Context, c *cloudClient, table string, onC
 	return nil
 }
 
-// pull fetches remote changes from Supabase and applies them to local records.
+// pull fetches remote changes from Supabase Tables incrementally.
 func (t *CloudSyncTask) pull(ctx context.Context, progress *job.Progress, c *cloudClient) error {
 	progress.SetTotal(100)
 	progress.SetProcessed(5)
 
 	cfg := config.GetInstance()
 	now := time.Now().UTC().Format(time.RFC3339)
+	since := ""
+	repo := GetInstance().Repository
 
-	zipPath, cleanup, err := t.downloadMetadataZip(ctx, c)
-	if err != nil {
-		return err
+	if err := t.pullPerformers(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("pull performers failed: %w", err)
 	}
-	defer cleanup()
-	progress.SetProcessed(50)
+	progress.SetProcessed(20)
 
-	t.importMetadataZip(ctx, zipPath)
+	if err := t.pullStudios(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("pull studios failed: %w", err)
+	}
+	progress.SetProcessed(40)
+
+	if err := t.pullTags(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("pull tags failed: %w", err)
+	}
+	progress.SetProcessed(60)
+
+	if err := t.pullScenes(ctx, c, repo, since); err != nil {
+		return fmt.Errorf("pull scenes failed: %w", err)
+	}
+	progress.SetProcessed(80)
+
+	if err := t.pullAppSettings(ctx, c, repo, cfg); err != nil {
+		return fmt.Errorf("pull app settings failed: %w", err)
+	}
 	progress.SetProcessed(100)
 
 	cfg.SetCloudSyncLastPullAt(now)
-	logger.Infof("Cloud Sync pull complete: imported metadata package from %s/%s", c.bucket, cloudMetadataPackage)
+	logger.Infof("Cloud Sync pull complete: synced directly from Supabase tables")
 	return nil
 }
 
-func (t *CloudSyncTask) downloadMetadataZip(ctx context.Context, c *cloudClient) (string, func(), error) {
-	tmpDir, err := os.MkdirTemp("", "stash-cloud-import-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("create cloud import temp dir: %w", err)
-	}
-	cleanup := func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			logger.Warnf("cloud sync: remove import temp dir %s: %v", tmpDir, err)
-		}
-	}
-
-	zipPath := filepath.Join(tmpDir, "stash-metadata.zip")
-	if err := c.downloadStorageFile(ctx, cloudMetadataPackage, zipPath); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-
-	return zipPath, cleanup, nil
-}
-
-func (t *CloudSyncTask) importMetadataZip(ctx context.Context, zipPath string) {
-	baseDir := filepath.Dir(zipPath)
-	task := ImportTask{
-		repository:          GetInstance().Repository,
-		resetter:            GetInstance().Database,
-		BaseDir:             baseDir,
-		TmpZip:              zipPath,
-		Reset:               false,
-		DuplicateBehaviour:  ImportDuplicateEnumOverwrite,
-		MissingRefBehaviour: models.ImportMissingRefEnumIgnore,
-		fileNamingAlgorithm: config.GetInstance().GetVideoFileNamingAlgorithm(),
-	}
-	task.Start(ctx)
-}
-
 func (t *CloudSyncTask) pullScenes(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
+	data, err := c.fetchSince(ctx, cloudTableScenes, since)
+	if err != nil {
+		return err
+	}
+
 	var rows []cloudSceneRow
-	offset := 0
-	for {
-		objects, err := c.listStorageObjects(ctx, cloudStorageSceneDir, offset)
-		if err != nil {
-			return err
-		}
-		if len(objects) == 0 {
-			break
-		}
-		for _, object := range objects {
-			if since != "" && object.UpdatedAt != "" && object.UpdatedAt < since {
-				continue
-			}
-			var row cloudSceneRow
-			if err := c.downloadStorageObject(ctx, cloudStorageObjectPath(cloudStorageSceneDir, object.Name), &row); err != nil {
-				logger.Warnf("cloud pull: download scene object %s: %v", object.Name, err)
-				continue
-			}
-			rows = append(rows, row)
-		}
-		if len(objects) < cloudBatchSize {
-			break
-		}
-		offset += len(objects)
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return fmt.Errorf("unmarshal scenes: %w", err)
 	}
 
 	if len(rows) == 0 {
@@ -852,23 +537,10 @@ func (t *CloudSyncTask) pullScenes(ctx context.Context, c *cloudClient, repo mod
 	updated := 0
 	if err := repo.WithTxn(ctx, func(ctx context.Context) error {
 		for _, row := range rows {
-			if row.Path == "" {
-				logger.Warnf("cloud pull: skipping scene row with empty path")
+			existing, err := repo.Scene.Find(ctx, row.ID)
+			if err != nil || existing == nil {
 				continue
 			}
-			matches, err := repo.Scene.FindByPath(ctx, row.Path)
-			if err != nil {
-				logger.Warnf("cloud pull: find scene by path %q: %v", row.Path, err)
-				continue
-			}
-			if len(matches) == 0 {
-				logger.Warnf("cloud pull: skipping scene path %q because it was not found locally", row.Path)
-				continue
-			}
-			if len(matches) > 1 {
-				logger.Warnf("cloud pull: path %q matched %d local scenes; updating the first match", row.Path, len(matches))
-			}
-			existing := matches[0]
 
 			partial := models.ScenePartial{
 				Title:     models.NewOptionalString(row.Title),
@@ -886,7 +558,7 @@ func (t *CloudSyncTask) pullScenes(ctx context.Context, c *cloudClient, repo mod
 			}
 
 			if _, err := repo.Scene.UpdatePartial(ctx, existing.ID, partial); err != nil {
-				logger.Warnf("cloud pull: update scene %d (%s): %v", existing.ID, row.Path, err)
+				logger.Warnf("cloud pull: update scene %d: %v", existing.ID, err)
 				continue
 			}
 			updated++
