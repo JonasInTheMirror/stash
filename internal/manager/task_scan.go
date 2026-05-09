@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
+
 
 	"github.com/99designs/gqlgen/graphql/handler/lru"
 	"github.com/remeh/sizedwaitgroup"
@@ -580,6 +582,12 @@ func (f *scanFilter) Accept(ctx context.Context, path string, info fs.FileInfo, 
 		logger.Warnf("Skipping %q as it overlaps with the generated folder", path)
 		return false
 	}
+
+	// Skip macOS metadata files (AppleDouble)
+	if strings.HasPrefix(info.Name(), "._") {
+		return false
+	}
+
 
 	// exit early on cutoff
 	if info.Mode().IsRegular() && info.ModTime().Before(f.minModTime) {
