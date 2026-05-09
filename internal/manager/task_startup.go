@@ -72,9 +72,11 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 
 
 func (s *Manager) TriggerStartupTasks() {
-	// Wait 15 seconds after startup to allow system to settle before starting intensive tasks.
-	time.AfterFunc(15*time.Second, func() {
+	// Wait 2 seconds after startup to allow system to settle before starting intensive tasks.
+	time.AfterFunc(2*time.Second, func() {
 		logger.Info("Triggering Startup sequence (Scan & Identify)...")
-		s.JobManager.Add(context.Background(), "Startup Tasks (Scan & Identify)", &StartupJob{manager: s})
+		s.JobManager.Start(context.Background(), "Startup Tasks (Scan & Identify)", &StartupJob{manager: s})
 	})
 }
+
+

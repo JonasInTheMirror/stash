@@ -87,28 +87,45 @@ func (j *IdentifyJob) Execute(ctx context.Context, progress *job.Progress) error
 		}
 
 		progress.SetTotal(len(sceneIDs))
+
+		// Parallelize identification of specific IDs
+		const numIdentifyWorkers = 50
+		idCh := make(chan int, len(sceneIDs))
 		for _, id := range sceneIDs {
-			if job.IsCancelled(ctx) {
-				break
-			}
-
-			scene, err := r.Scene.Find(ctx, id)
-			if err != nil {
-				logger.Errorf("identify: finding scene id %d: %v", id, err)
-				progress.Increment()
-				continue
-			}
-			if scene == nil {
-				logger.Warnf("identify: scene id %d not found", id)
-				progress.Increment()
-				continue
-			}
-
-
-			j.identifyScene(ctx, scene, sources)
+			idCh <- id
 		}
+		close(idCh)
+
+		var wg sync.WaitGroup
+		for i := 0; i < numIdentifyWorkers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for id := range idCh {
+					if job.IsCancelled(ctx) {
+						continue
+					}
+
+					scene, err := r.Scene.Find(ctx, id)
+					if err != nil {
+						logger.Errorf("identify: finding scene id %d: %v", id, err)
+						progress.Increment()
+						continue
+					}
+					if scene == nil {
+						logger.Warnf("identify: scene id %d not found", id)
+						progress.Increment()
+						continue
+					}
+
+					j.identifyScene(ctx, scene, sources)
+				}
+			}()
+		}
+		wg.Wait()
 
 		return nil
+
 	}); err != nil {
 		logger.Errorf("error encountered while identifying scenes: %v", err)
 	}

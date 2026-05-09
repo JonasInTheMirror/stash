@@ -216,7 +216,7 @@ func (t *CloudSyncTask) push(ctx context.Context, progress *job.Progress, c *clo
 
 	cfg := config.GetInstance()
 	now := time.Now().UTC().Format(time.RFC3339)
-	since := "" // Change to cfg.GetCloudSyncLastPushAt() if you want to push only delta updates.
+	since := cfg.GetCloudSyncLastPushAt() // Only push items changed since the last successful sync
 	repo := GetInstance().Repository
 
 	if err := t.pushPerformers(ctx, c, repo, since); err != nil {
@@ -245,9 +245,10 @@ func (t *CloudSyncTask) push(ctx context.Context, progress *job.Progress, c *clo
 	progress.SetProcessed(100)
 
 	cfg.SetCloudSyncLastPushAt(now)
-	logger.Infof("Cloud Sync push complete: synced directly to Supabase tables")
+	logger.Infof("Cloud Sync delta push complete: only changed items were synced")
 	return nil
 }
+
 
 func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
 	var rows []cloudSceneRow
@@ -812,8 +813,8 @@ func (m *Manager) TriggerCloudPullOnStartup() {
 		return
 	}
 
-	time.AfterFunc(10*time.Second, func() {
+	time.AfterFunc(2*time.Second, func() {
 		logger.Infof("Triggering Cloud Sync pull on startup...")
-		m.JobManager.Add(context.Background(), "Cloud Sync (Startup Pull)", CreateCloudPullTask())
+		m.JobManager.Start(context.Background(), "Cloud Sync (Startup Pull)", CreateCloudPullTask())
 	})
 }
