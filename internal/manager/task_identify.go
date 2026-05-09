@@ -103,11 +103,7 @@ func (j *IdentifyJob) Execute(ctx context.Context, progress *job.Progress) error
 				progress.Increment()
 				continue
 			}
-			if scene.Organized {
-				logger.Debugf("identify: skipping already-organized scene %d", id)
-				progress.Increment()
-				continue
-			}
+
 
 			j.identifyScene(ctx, scene, sources)
 		}
@@ -217,10 +213,7 @@ func (j *IdentifyJob) identifyAllScenes(ctx context.Context, sources []identify.
 		if job.IsCancelled(ctx) {
 			return nil
 		}
-		if scene.Organized {
-			j.progress.Increment()
-			return nil
-		}
+
 		identifyCh <- scene
 		return nil
 	})
