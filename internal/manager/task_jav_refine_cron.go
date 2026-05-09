@@ -24,9 +24,10 @@ func StartJAVRefineCron(ctx context.Context) {
 			defer ticker.Stop()
 
 			// Run once shortly after startup so failures from the previous
-			// session are retried quickly (not after a full hour).
-			initialDelay := time.NewTimer(5 * time.Minute)
+			// session are retried quickly.
+			initialDelay := time.NewTimer(10 * time.Second)
 			defer initialDelay.Stop()
+
 
 			for {
 				select {

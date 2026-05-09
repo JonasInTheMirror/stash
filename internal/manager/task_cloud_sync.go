@@ -85,29 +85,59 @@ func (c *cloudClient) upsertWithConflict(ctx context.Context, table string, onCo
 	if onConflict != "" {
 		endpoint += "?on_conflict=" + url.QueryEscape(onConflict)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+
+	maxRetries := 5
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			waitTime := time.Duration(attempt*attempt) * time.Second
+			logger.Infof("cloud sync: retrying %s upsert in %v (attempt %d/%d)...", table, waitTime, attempt, maxRetries)
+			
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(waitTime):
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+c.key)
+		req.Header.Set("apikey", c.key)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Prefer", "resolution=merge-duplicates,return=minimal")
+
+		client := &http.Client{Timeout: 5 * time.Minute}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			logger.Warnf("cloud sync: upsert %s attempt %d failed: %v", table, attempt, err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			lastErr = fmt.Errorf("upsert %s failed (%d): %s", table, resp.StatusCode, string(b))
+			logger.Warnf("cloud sync: upsert %s attempt %d failed with status %d", table, attempt, resp.StatusCode)
+			
+			// If it's a 4xx error (client error), don't bother retrying as it's likely a schema mismatch
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return lastErr
+			}
+			continue
+		}
+
+		return nil // Success!
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("apikey", c.key)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Prefer", "resolution=merge-duplicates,return=minimal")
-
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("upsert %s: %w", table, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upsert %s failed (%d): %s", table, resp.StatusCode, string(b))
-	}
-	return nil
+	return fmt.Errorf("upsert %s failed after %d attempts: %w", table, maxRetries, lastErr)
 }
+
 
 func (c *cloudClient) fetchSince(ctx context.Context, table, since string) ([]byte, error) {
 	endpoint := fmt.Sprintf("%s/rest/v1/%s?select=*", c.url, table)

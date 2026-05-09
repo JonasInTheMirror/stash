@@ -94,6 +94,12 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 	}
 	stats.IdentifySuccess = countAfter 
 
+	logger.Info("Startup sequence: Starting JAV Refine (retry failures)...")
+	javRefineJob := &retryUnrefinedJAVJob{}
+	if err := javRefineJob.Execute(ctx, progress); err != nil {
+		logger.Errorf("Startup sequence: JAV Refine failed: %v", err)
+	}
+
 
 	logger.Info("Startup sequence: Starting immediate Cloud Push...")
 	pushTask := CreateCloudPushTask()
