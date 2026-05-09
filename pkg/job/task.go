@@ -59,9 +59,11 @@ func (tq *TaskQueue) executer(ctx context.Context) {
 		tq.wg.Add()
 		go func() {
 			defer tq.wg.Done()
-			tq.p.ExecuteTask(tt.description, func() {
-				tt.fn(ctx)
-			})
+			// HARDEN: Don't call ExecuteTask here because updating the description 
+			// for 100 parallel tasks creates massive mutex contention.
+			// Just run the function and let the function handle its own progress increment.
+			tt.fn(ctx)
 		}()
 	}
+
 }
