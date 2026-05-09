@@ -43,9 +43,15 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 			Rescan:               true,
 		}
 	}
+	// HARDEN: Always ensure non-sequential scanning for startup to maximize background concurrency
+	// This allows the scanner to finish quickly while FFmpeg runs in the background.
+	nonSequential := false
 	scanInput := ScanMetadataInput{
 		ScanMetadataOptions: *scanOptions,
 	}
+	scanInput.SequentialScanning = &nonSequential
+
+
 
 	scanJob, err := j.manager.CreateScanJob(scanInput)
 	if err == nil {

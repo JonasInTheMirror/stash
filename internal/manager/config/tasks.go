@@ -19,7 +19,10 @@ type ScanMetadataOptions struct {
 	ScanGenerateThumbnails bool `json:"scanGenerateThumbnails"`
 	// Generate image thumbnails during scan
 	ScanGenerateClipPreviews bool `json:"scanGenerateClipPreviews"`
+	// Use sequential scanning for generation tasks
+	SequentialScanning *bool `json:"sequentialScanning"`
 }
+
 
 type AutoTagMetadataOptions struct {
 	// IDs of performers to tag files with, or "*" for all

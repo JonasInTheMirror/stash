@@ -1031,10 +1031,15 @@ func (i *Config) GetParallelTasks() int {
 func (i *Config) GetParallelTasksWithAutoDetection() int {
 	parallelTasks := i.getInt(ParallelTasks)
 	if parallelTasks <= 0 {
-		parallelTasks = (runtime.NumCPU() / 4) + 1
+		// HARDEN: Use full CPU power for scans by default
+		parallelTasks = runtime.NumCPU()
+		if parallelTasks < 4 {
+			parallelTasks = 4 // Minimum floor for concurrency
+		}
 	}
 	return parallelTasks
 }
+
 
 // GetUseCustomSpriteInterval returns true if the sprite minimum, maximum, and interval settings
 // should be used instead of the default

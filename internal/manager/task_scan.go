@@ -681,8 +681,14 @@ func getScanHandlers(options ScanMetadataInput, taskQueue *job.TaskQueue, progre
 					taskQueue:          taskQueue,
 					progress:           progress,
 					paths:              mgr.Paths,
-					sequentialScanning: c.GetSequentialScanning(),
+					sequentialScanning: func() bool {
+						if options.SequentialScanning != nil {
+							return *options.SequentialScanning
+						}
+						return c.GetSequentialScanning()
+					}(),
 				},
+
 				ScanConfig: &scanConfig{
 					isGenerateThumbnails:       options.ScanGenerateThumbnails,
 					isGenerateClipPreviews:     options.ScanGenerateClipPreviews,
@@ -714,8 +720,14 @@ func getScanHandlers(options ScanMetadataInput, taskQueue *job.TaskQueue, progre
 					progress:            progress,
 					paths:               mgr.Paths,
 					fileNamingAlgorithm: c.GetVideoFileNamingAlgorithm(),
-					sequentialScanning:  c.GetSequentialScanning(),
+					sequentialScanning: func() bool {
+						if options.SequentialScanning != nil {
+							return *options.SequentialScanning
+						}
+						return c.GetSequentialScanning()
+					}(),
 				},
+
 				FileNamingAlgorithm: c.GetVideoFileNamingAlgorithm(),
 				Paths:               mgr.Paths,
 			},

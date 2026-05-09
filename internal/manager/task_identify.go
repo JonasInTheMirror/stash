@@ -89,7 +89,8 @@ func (j *IdentifyJob) Execute(ctx context.Context, progress *job.Progress) error
 		progress.SetTotal(len(sceneIDs))
 
 		// Parallelize identification of specific IDs
-		const numIdentifyWorkers = 50
+		const numIdentifyWorkers = 100
+
 		idCh := make(chan int, len(sceneIDs))
 		for _, id := range sceneIDs {
 			idCh <- id
