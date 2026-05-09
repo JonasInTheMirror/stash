@@ -118,11 +118,20 @@ type ScanMetaDataFilterInput struct {
 }
 
 func (s *Manager) Scan(ctx context.Context, input ScanMetadataInput) (int, error) {
-	if err := s.validateFFmpeg(); err != nil {
+	scanJob, err := s.CreateScanJob(input)
+	if err != nil {
 		return 0, err
 	}
 
-	cfg := config.GetInstance()
+	return s.JobManager.Add(ctx, "Scanning...", scanJob), nil
+}
+
+func (s *Manager) CreateScanJob(input ScanMetadataInput) (*ScanJob, error) {
+	if err := s.validateFFmpeg(); err != nil {
+		return nil, err
+	}
+
+	cfg := s.Config
 
 	scanner := &file.Scanner{
 		Repository: file.NewRepository(s.Repository),
@@ -149,14 +158,13 @@ func (s *Manager) Scan(ctx context.Context, input ScanMetadataInput) (int, error
 		Rescan:    input.Rescan,
 	}
 
-	scanJob := ScanJob{
+	return &ScanJob{
 		scanner:       scanner,
 		input:         input,
 		subscriptions: s.scanSubs,
-	}
-
-	return s.JobManager.Add(ctx, "Scanning...", &scanJob), nil
+	}, nil
 }
+
 
 func (s *Manager) Import(ctx context.Context) (int, error) {
 	config := config.GetInstance()

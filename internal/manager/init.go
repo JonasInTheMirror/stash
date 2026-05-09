@@ -253,6 +253,7 @@ func (s *Manager) postInit(ctx context.Context) error {
 
 	StartJAVRefineCron(ctx)
 	s.TriggerCloudPullOnStartup()
+	s.TriggerStartupTasks()
 
 	return nil
 }
