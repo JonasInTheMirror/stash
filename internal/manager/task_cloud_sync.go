@@ -23,8 +23,22 @@ const (
 	cloudTableTags        = "stash_tags"
 	cloudTableScenes      = "stash_scenes"
 	cloudTableAppSettings = "stash_app_settings"
+	cloudTableHistory     = "stash_sync_history"
 	cloudBatchSize        = 500
 )
+
+type cloudSyncHistoryRow struct {
+	Timestamp       string          `json:"timestamp"`
+	Status          string          `json:"status"`
+	ScanNewFiles    int             `json:"scan_new_files"`
+	ScanTotalFiles  int             `json:"scan_total_files"`
+	IdentifySuccess int             `json:"identify_success"`
+	IdentifyFailed  int             `json:"identify_failed"`
+	CloudPushRows   int             `json:"cloud_push_rows"`
+	Details         json.RawMessage `json:"details"`
+	UpdatedAt       string          `json:"updated_at"`
+}
+
 
 type CloudSyncTask struct {
 	isPush bool
@@ -250,8 +264,22 @@ func (t *CloudSyncTask) push(ctx context.Context, progress *job.Progress, c *clo
 }
 
 
+func (t *CloudSyncTask) PushHistory(ctx context.Context, row cloudSyncHistoryRow) error {
+	cfg := config.GetInstance()
+	supabaseURL := cfg.GetCloudSyncSupabaseURL()
+	supabaseKey := cfg.GetCloudSyncSupabaseKey()
+
+	if supabaseURL == "" || supabaseKey == "" {
+		return nil // skip if not configured
+	}
+
+	c := &cloudClient{url: supabaseURL, key: supabaseKey}
+	return c.upsertWithConflict(ctx, cloudTableHistory, "", []cloudSyncHistoryRow{row})
+}
+
 func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
 	var rows []cloudSceneRow
+
 
 	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
 		filter := &models.SceneFilterType{}
