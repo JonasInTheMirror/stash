@@ -433,17 +433,39 @@ type sceneFingerprintGetter interface {
 
 func (s stashboxSource) ScrapeScenes(ctx context.Context, sceneID int) ([]*models.ScrapedScene, error) {
 	var fps []models.Fingerprints
+	var title string
 	if err := txn.WithReadTxn(ctx, s.txnManager, func(ctx context.Context) error {
 		var err error
 		fps, err = s.sceneFingerprintGetter.GetScenesFingerprints(ctx, []int{sceneID})
-		return err
+		if err != nil {
+			return err
+		}
+		
+		scene, err := instance.Repository.Scene.Find(ctx, sceneID)
+		if err == nil && scene != nil {
+			title = scene.Title
+		}
+		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("error getting scene fingerprints: %w", err)
+		return nil, fmt.Errorf("error getting scene info: %w", err)
 	}
 
+	// 1. Try Fingerprints first
 	results, err := s.FindSceneByFingerprints(ctx, fps[0])
 	if err != nil {
-		return nil, fmt.Errorf("error querying stash-box using scene ID %d: %w", sceneID, err)
+		logger.Warnf("stash-box: fingerprint search failed for %d: %v", sceneID, err)
+	}
+
+	// 2. Fallback to cleaned Title search if no results
+	if len(results) == 0 && title != "" {
+		cleanedTitle := cleanIdentifyTitle(title)
+		if cleanedTitle != "" {
+			logger.Infof("stash-box: no fingerprint match, trying title search: %s", cleanedTitle)
+			results, err = s.QueryScene(ctx, cleanedTitle)
+			if err != nil {
+				logger.Warnf("stash-box: title search failed: %v", err)
+			}
+		}
 	}
 
 	if err := txn.WithReadTxn(ctx, s.txnManager, func(ctx context.Context) error {
@@ -463,6 +485,31 @@ func (s stashboxSource) ScrapeScenes(ctx context.Context, sceneID int) ([]*model
 
 	return nil, nil
 }
+
+// cleanIdentifyTitle strips common site prefixes and junk from titles to improve scraping.
+func cleanIdentifyTitle(title string) string {
+	// 1. Strip "site.com@" prefixes
+	if idx := strings.Index(title, "@"); idx != -1 {
+		title = title[idx+1:]
+	}
+	
+	// 2. Strip common junk strings and extensions
+	junk := []string{"hhd800.com", "javmix.tv", "1pondo", "caribbeancom", " Tokyo-Hot ", ".mp4", ".mkv", ".avi"}
+	for _, j := range junk {
+		title = strings.ReplaceAll(title, j, "")
+	}
+	title = strings.TrimSpace(title)
+
+	// 3. Advanced JAV Code Truncation
+	// This regex looks for patterns like XXX-123xx and truncates the extra digits at the end
+	// It handles NHDTC-17702 -> NHDTC-177, NHDTC-0601 -> NHDTC-060, etc.
+	re := regexp.MustCompile(`(?i)([A-Z]+-[0-9]{3})[0-9]+`)
+	title = re.ReplaceAllString(title, "$1")
+	
+	return strings.TrimSpace(title)
+}
+
+
 
 func (s stashboxSource) String() string {
 	return fmt.Sprintf("stash-box %s", s.endpoint)
