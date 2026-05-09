@@ -63,10 +63,13 @@ func (j *ScanJob) Execute(ctx context.Context, progress *job.Progress) error {
 
 	start := time.Now()
 
-	nTasks := cfg.GetParallelTasksWithAutoDetection()
+	// HARDEN: Use 100 workers for scanning/fingerprinting to unblock the pipeline
+	nScannerTasks := 100
+	// Use CPU-optimized count for heavy FFmpeg tasks
+	nGeneratorTasks := cfg.GetParallelTasksWithAutoDetection()
 
 	const taskQueueSize = 200000
-	taskQueue := job.NewTaskQueue(ctx, progress, taskQueueSize, nTasks)
+	taskQueue := job.NewTaskQueue(ctx, progress, taskQueueSize, nGeneratorTasks)
 
 	var minModTime time.Time
 	if j.input.Filter != nil && j.input.Filter.MinModTime != nil {
@@ -78,9 +81,10 @@ func (j *ScanJob) Execute(ctx context.Context, progress *job.Progress) error {
 	j.scanner.ScanFilters = []file.PathFilter{newScanFilter(c, repo, minModTime)}
 	j.scanner.HandlerRequiredFilters = []file.Filter{newHandlerRequiredFilter(cfg, repo)}
 
-	logger.Infof("Starting scan of %d paths with %d parallel tasks", len(paths), nTasks)
+	logger.Infof("Starting scan: %d scanner workers (hashing), %d generator workers (ffmpeg)", nScannerTasks, nGeneratorTasks)
 
-	j.runJob(ctx, paths, nTasks, progress)
+	j.runJob(ctx, paths, nScannerTasks, progress)
+
 
 	taskQueue.Close()
 
