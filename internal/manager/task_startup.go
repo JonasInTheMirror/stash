@@ -31,15 +31,22 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 	countBefore, _ := repo.Scene.Count(ctx)
 
 	logger.Info("Startup sequence: Starting Scan...")
-	scanInput := ScanMetadataInput{
-		ScanMetadataOptions: config.ScanMetadataOptions{
-			Rescan:               true,
+	// Load saved Scan preferences from UI/SQLite
+	scanOptions := j.manager.Config.GetDefaultScanSettings()
+	if scanOptions == nil {
+		// Fallback to reasonable defaults if never saved
+		scanOptions = &config.ScanMetadataOptions{
 			ScanGenerateCovers:   true,
 			ScanGeneratePreviews: true,
 			ScanGenerateSprites:  true,
 			ScanGeneratePhashes:  true,
-		},
+			Rescan:               true,
+		}
 	}
+	scanInput := ScanMetadataInput{
+		ScanMetadataOptions: *scanOptions,
+	}
+
 	scanJob, err := j.manager.CreateScanJob(scanInput)
 	if err == nil {
 		if err := scanJob.Execute(ctx, progress); err != nil {
@@ -49,33 +56,38 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 	}
 	countAfter, _ := repo.Scene.Count(ctx)
 	stats.ScanNewFiles = countAfter - countBefore
-
 	stats.ScanTotalFiles = countAfter
 
 	logger.Info("Startup sequence: Starting Identify...")
-	stashBoxes := j.manager.Config.GetStashBoxes()
-	var sources []*identify.Source
-	for _, sb := range stashBoxes {
-		endpoint := sb.Endpoint
-		sources = append(sources, &identify.Source{
-			Source: &scraper.Source{
-				StashBoxEndpoint: &endpoint,
-			},
-		})
+	// Load saved Identify preferences from UI/SQLite
+	identifyOptions := j.manager.Config.GetDefaultIdentifySettings()
+	if identifyOptions == nil {
+		// Fallback to all configured Stash-Boxes if no specific defaults saved
+		stashBoxes := j.manager.Config.GetStashBoxes()
+		var sources []*identify.Source
+		for _, sb := range stashBoxes {
+			endpoint := sb.Endpoint
+			sources = append(sources, &identify.Source{
+				Source: &scraper.Source{
+					StashBoxEndpoint: &endpoint,
+				},
+			})
+		}
+		identifyOptions = &identify.Options{
+			Sources: sources,
+		}
 	}
 
-	if len(sources) > 0 {
-		identifyJob := CreateIdentifyJob(identify.Options{
-			Sources: sources,
-		})
-		if err := identifyJob.Execute(ctx, progress); err != nil {
-			logger.Errorf("Startup sequence: Identify failed: %v", err)
-			stats.Status = "PARTIAL_FAILURE"
-		}
-		// In a real scenario, we'd parse failed_identifies.json for stats.IdentifyFailed
-		// For now, we'll assume success if no error was returned.
-		stats.IdentifySuccess = countAfter // Simplified for demonstration
+	// Link Identify's skip logic to the Scan's Rescan preference
+	identifyOptions.ScanRescan = scanOptions.Rescan
+
+	identifyJob := CreateIdentifyJob(*identifyOptions)
+	if err := identifyJob.Execute(ctx, progress); err != nil {
+		logger.Errorf("Startup sequence: Identify failed: %v", err)
+		stats.Status = "PARTIAL_FAILURE"
 	}
+	stats.IdentifySuccess = countAfter 
+
 
 	logger.Info("Startup sequence: Starting immediate Cloud Push...")
 	pushTask := CreateCloudPushTask()

@@ -96,6 +96,10 @@ func (j *IdentifyJob) Execute(ctx context.Context, progress *job.Progress) error
 		}
 		close(idCh)
 
+		// Check if we should skip organized scenes based on the Scan Rescan setting
+		// If Rescan is true, we process everything. If false, we skip organized.
+		skipOrganized := !j.input.ScanRescan
+
 		var wg sync.WaitGroup
 		for i := 0; i < numIdentifyWorkers; i++ {
 			wg.Add(1)
@@ -118,11 +122,18 @@ func (j *IdentifyJob) Execute(ctx context.Context, progress *job.Progress) error
 						continue
 					}
 
+					if skipOrganized && scene.Organized {
+						logger.Debugf("identify: skipping organized scene %d", id)
+						progress.Increment()
+						continue
+					}
+
 					j.identifyScene(ctx, scene, sources)
 				}
 			}()
 		}
 		wg.Wait()
+
 
 		return nil
 
@@ -226,14 +237,22 @@ func (j *IdentifyJob) identifyAllScenes(ctx context.Context, sources []identify.
 		}()
 	}
 
+	skipOrganized := !j.input.ScanRescan
+
 	batchErr := scene.BatchProcess(ctx, r.Scene, sceneFilter, findFilter, func(scene *models.Scene) error {
 		if job.IsCancelled(ctx) {
+			return nil
+		}
+
+		if skipOrganized && scene.Organized {
+			j.progress.Increment()
 			return nil
 		}
 
 		identifyCh <- scene
 		return nil
 	})
+
 
 	close(identifyCh)
 	refineWg.Wait() // always wait for refine even when batch errors

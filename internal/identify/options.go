@@ -24,7 +24,10 @@ type Options struct {
 	SceneIDs []string `json:"sceneIDs"`
 	// paths of scenes to identify - ignored if scene ids are set
 	Paths []string `json:"paths"`
+	// Use the rescan setting from the scan preference to determine if organized scenes should be skipped
+	ScanRescan bool `json:"scanRescan"`
 }
+
 
 type MetadataOptions struct {
 	// any fields missing from here are defaulted to MERGE and createMissing false
