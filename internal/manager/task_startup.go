@@ -27,91 +27,96 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 		UpdatedAt: startTime.Format(time.RFC3339),
 	}
 
+	cfg := j.manager.Config
 	repo := j.manager.Repository
 	countBefore, _ := repo.Scene.Count(ctx)
 
-	logger.Info("Startup sequence: Starting Scan...")
-	// Load saved Scan preferences from UI/SQLite
-	scanOptions := j.manager.Config.GetDefaultScanSettings()
-	if scanOptions == nil {
-		// Fallback to reasonable defaults if never saved
-		scanOptions = &config.ScanMetadataOptions{
-			ScanGenerateCovers:   true,
-			ScanGeneratePreviews: true,
-			ScanGenerateSprites:  true,
-			ScanGeneratePhashes:  true,
-			Rescan:               true,
+	var scanOptions *config.ScanMetadataOptions
+	if cfg.GetAutomationStartupScan() {
+		logger.Info("Startup sequence: Starting Scan...")
+		// Load saved Scan preferences from UI/SQLite
+		scanOptions = cfg.GetDefaultScanSettings()
+		if scanOptions == nil {
+			scanOptions = &config.ScanMetadataOptions{
+				ScanGenerateCovers:   true,
+				ScanGeneratePreviews: true,
+				ScanGenerateSprites:  true,
+				ScanGeneratePhashes:  true,
+				Rescan:               true,
+			}
 		}
-	}
-	// HARDEN: Always ensure non-sequential scanning for startup to maximize background concurrency
-	// This allows the scanner to finish quickly while FFmpeg runs in the background.
-	nonSequential := false
-	scanInput := ScanMetadataInput{
-		ScanMetadataOptions: *scanOptions,
-	}
-	scanInput.SequentialScanning = &nonSequential
-
-
-
-	scanJob, err := j.manager.CreateScanJob(scanInput)
-	if err == nil {
-		if err := scanJob.Execute(ctx, progress); err != nil {
-			logger.Errorf("Startup sequence: Scan failed: %v", err)
-			stats.Status = "PARTIAL_FAILURE"
+		nonSequential := false
+		scanInput := ScanMetadataInput{
+			ScanMetadataOptions: *scanOptions,
 		}
+		scanInput.SequentialScanning = &nonSequential
+
+		scanJob, err := j.manager.CreateScanJob(scanInput)
+		if err == nil {
+			if err := scanJob.Execute(ctx, progress); err != nil {
+				logger.Errorf("Startup sequence: Scan failed: %v", err)
+				stats.Status = "PARTIAL_FAILURE"
+			}
+		}
+	} else {
+		logger.Info("Startup sequence: Scan skipped (disabled in Automation settings).")
 	}
 	countAfter, _ := repo.Scene.Count(ctx)
 	stats.ScanNewFiles = countAfter - countBefore
 	stats.ScanTotalFiles = countAfter
 
-	logger.Info("Startup sequence: Starting Identify...")
-	// Load saved Identify preferences from UI/SQLite
-	identifyOptions := j.manager.Config.GetDefaultIdentifySettings()
-	if identifyOptions == nil {
-		// Fallback to all configured Stash-Boxes if no specific defaults saved
-		stashBoxes := j.manager.Config.GetStashBoxes()
-		var sources []*identify.Source
-		for _, sb := range stashBoxes {
-			endpoint := sb.Endpoint
-			sources = append(sources, &identify.Source{
-				Source: &scraper.Source{
-					StashBoxEndpoint: &endpoint,
-				},
-			})
+	if cfg.GetAutomationStartupIdentify() {
+		logger.Info("Startup sequence: Starting Identify...")
+		identifyOptions := cfg.GetDefaultIdentifySettings()
+		if identifyOptions == nil {
+			stashBoxes := cfg.GetStashBoxes()
+			var sources []*identify.Source
+			for _, sb := range stashBoxes {
+				endpoint := sb.Endpoint
+				sources = append(sources, &identify.Source{
+					Source: &scraper.Source{
+						StashBoxEndpoint: &endpoint,
+					},
+				})
+			}
+			identifyOptions = &identify.Options{
+				Sources: sources,
+			}
 		}
-		identifyOptions = &identify.Options{
-			Sources: sources,
+
+		if scanOptions != nil {
+			identifyOptions.ScanRescan = scanOptions.Rescan
 		}
+
+		identifyJob := CreateIdentifyJob(*identifyOptions)
+		if err := identifyJob.Execute(ctx, progress); err != nil {
+			logger.Errorf("Startup sequence: Identify failed: %v", err)
+			stats.Status = "PARTIAL_FAILURE"
+		}
+
+		logger.Info("Startup sequence: Starting JAV Refine (retry failures)...")
+		javRefineJob := &retryUnrefinedJAVJob{}
+		if err := javRefineJob.Execute(ctx, progress); err != nil {
+			logger.Errorf("Startup sequence: JAV Refine failed: %v", err)
+		}
+	} else {
+		logger.Info("Startup sequence: Identify skipped (disabled in Automation settings).")
 	}
+	stats.IdentifySuccess = countAfter
 
-	// Link Identify's skip logic to the Scan's Rescan preference
-	identifyOptions.ScanRescan = scanOptions.Rescan
-
-	identifyJob := CreateIdentifyJob(*identifyOptions)
-	if err := identifyJob.Execute(ctx, progress); err != nil {
-		logger.Errorf("Startup sequence: Identify failed: %v", err)
-		stats.Status = "PARTIAL_FAILURE"
-	}
-	stats.IdentifySuccess = countAfter 
-
-	logger.Info("Startup sequence: Starting JAV Refine (retry failures)...")
-	javRefineJob := &retryUnrefinedJAVJob{}
-	if err := javRefineJob.Execute(ctx, progress); err != nil {
-		logger.Errorf("Startup sequence: JAV Refine failed: %v", err)
-	}
-
-
-	logger.Info("Startup sequence: Starting immediate Cloud Push...")
-	pushTask := CreateCloudPushTask()
-	if err := pushTask.Execute(ctx, progress); err != nil {
-		logger.Errorf("Startup sequence: Cloud Push failed: %v", err)
-		stats.Status = "PARTIAL_FAILURE"
-	}
-
-	// Finalize and push history
-	logger.Info("Startup sequence: Uploading sync history to Supabase...")
-	if err := pushTask.PushHistory(ctx, stats); err != nil {
-		logger.Errorf("Startup sequence: Failed to upload sync history: %v", err)
+	if cfg.GetAutomationCloudPush() {
+		logger.Info("Startup sequence: Starting immediate Cloud Push...")
+		pushTask := CreateCloudPushTask()
+		if err := pushTask.Execute(ctx, progress); err != nil {
+			logger.Errorf("Startup sequence: Cloud Push failed: %v", err)
+			stats.Status = "PARTIAL_FAILURE"
+		}
+		logger.Info("Startup sequence: Uploading sync history to Supabase...")
+		if err := pushTask.PushHistory(ctx, stats); err != nil {
+			logger.Errorf("Startup sequence: Failed to upload sync history: %v", err)
+		}
+	} else {
+		logger.Info("Startup sequence: Cloud Push skipped (disabled in Automation settings).")
 	}
 
 	logger.Info("Startup sequence: Finished.")

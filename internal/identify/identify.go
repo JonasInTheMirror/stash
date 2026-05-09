@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
@@ -388,7 +389,7 @@ func getScenePartial(scene *models.Scene, scraped *models.ScrapedScene, fieldOpt
 	partial := models.ScenePartial{}
 
 	if scraped.Title != nil && (scene.Title != *scraped.Title) {
-		if shouldSetSingleValueField(fieldOptions["title"], scene.Title != "") {
+		if shouldSetSingleValueField(fieldOptions["title"], strings.Contains(scene.Title, " | ")) {
 			partial.Title = models.NewOptionalString(*scraped.Title)
 		}
 	}
