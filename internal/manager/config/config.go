@@ -53,6 +53,12 @@ const (
 	SignedURLExpiry        = "signed_url_expiry"
 	signedURLExpiryDefault = 60 * 60 * 4 // 4 hours in seconds
 
+	AutomationCloudPull       = "automation.cloud_pull"
+	AutomationCloudPush       = "automation.cloud_push"
+	AutomationStartupScan     = "automation.startup_scan"
+	AutomationStartupIdentify = "automation.startup_identify"
+
+
 	// SFWContentMode mode config key
 	SFWContentMode = "sfw_content_mode"
 
@@ -610,11 +616,19 @@ func (i *Config) getStringSlice(key string) []string {
 }
 
 func (i *Config) GetCloudSyncSupabaseURL() string {
-	return i.getString(CloudSyncSupabaseURL)
+	ret := i.getString(CloudSyncSupabaseURL)
+	if ret == "" {
+		return "https://dkptmjfzlluczjvvmruz.supabase.co"
+	}
+	return ret
 }
 
 func (i *Config) GetCloudSyncSupabaseKey() string {
-	return i.getString(CloudSyncSupabaseKey)
+	ret := i.getString(CloudSyncSupabaseKey)
+	if ret == "" {
+		return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrcHRtamZ6bGx1Y3pqdnZtcnV6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzgxMDEzNywiZXhwIjoyMDkzMzg2MTM3fQ.zRAD9MFj96yIzSPzLErueHOW4j1bbUerX3cogqrXPDE"
+	}
+	return ret
 }
 
 func (i *Config) GetCloudSyncSupabaseBucket() string {
@@ -1869,6 +1883,24 @@ func (i *Config) GetNoProxy() string {
 	return i.getString(NoProxy)
 }
 
+func (i *Config) GetAutomationCloudPull() bool {
+	return i.getBoolDefault(AutomationCloudPull, true)
+}
+
+func (i *Config) GetAutomationCloudPush() bool {
+	return i.getBoolDefault(AutomationCloudPush, true)
+}
+
+func (i *Config) GetAutomationStartupScan() bool {
+	return i.getBoolDefault(AutomationStartupScan, true)
+}
+
+func (i *Config) GetAutomationStartupIdentify() bool {
+	return i.getBoolDefault(AutomationStartupIdentify, true)
+}
+
+
+
 // ActivatePublicAccessTripwire sets the security_tripwire_accessed_from_public_internet
 // config field to the provided IP address to indicate that stash has been accessed
 // from this public IP without authentication.
@@ -2018,6 +2050,12 @@ func (i *Config) setDefaultValues() {
 
 	// Set NoProxy default
 	i.setDefault(NoProxy, noProxyDefault)
+
+	i.setDefault(AutomationCloudPull, true)
+	i.setDefault(AutomationCloudPush, true)
+	i.setDefault(AutomationStartupScan, true)
+	i.setDefault(AutomationStartupIdentify, true)
+
 
 	// set default package sources
 	i.setDefault(PluginPackageSources, []map[string]string{{

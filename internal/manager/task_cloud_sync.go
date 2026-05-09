@@ -111,6 +111,15 @@ func (c *cloudClient) upsertWithConflict(ctx context.Context, table string, onCo
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Prefer", "resolution=merge-duplicates,return=minimal")
 
+		// log row count if it's a slice
+		rowSlice, ok := rows.([]interface{})
+		if ok {
+			logger.Infof("cloud sync: upserting %d rows to %s...", len(rowSlice), table)
+		} else {
+			logger.Infof("cloud sync: upserting rows to %s...", table)
+		}
+
+
 		client := &http.Client{Timeout: 5 * time.Minute}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -308,6 +317,7 @@ func (t *CloudSyncTask) PushHistory(ctx context.Context, row cloudSyncHistoryRow
 }
 
 func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
+	logger.Infof("cloud sync: pushing scenes changed since %s...", since)
 	var rows []cloudSceneRow
 
 
@@ -371,6 +381,7 @@ func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo mod
 }
 
 func (t *CloudSyncTask) pushPerformers(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
+	logger.Infof("cloud sync: pushing performers changed since %s...", since)
 	var rows []cloudPerformerRow
 
 	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
@@ -433,6 +444,7 @@ func (t *CloudSyncTask) pushPerformers(ctx context.Context, c *cloudClient, repo
 }
 
 func (t *CloudSyncTask) pushStudios(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
+	logger.Infof("cloud sync: pushing studios changed since %s...", since)
 	var rows []cloudStudioRow
 
 	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
@@ -476,6 +488,7 @@ func (t *CloudSyncTask) pushStudios(ctx context.Context, c *cloudClient, repo mo
 }
 
 func (t *CloudSyncTask) pushTags(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
+	logger.Infof("cloud sync: pushing tags changed since %s...", since)
 	var rows []cloudTagRow
 
 	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {

@@ -440,6 +440,8 @@ type Mutation {
 
   "Change general configuration options"
   configureGeneral(input: ConfigGeneralInput!): ConfigGeneralResult!
+  configureAutomation(input: ConfigAutomationInput!): ConfigAutomationResult!
+
   configureInterface(input: ConfigInterfaceInput!): ConfigInterfaceResult!
   configureDLNA(input: ConfigDLNAInput!): ConfigDLNAResult!
   configureScraping(input: ConfigScrapingInput!): ConfigScrapingResult!

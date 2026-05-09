@@ -8,7 +8,9 @@ import (
 
 	"github.com/stashapp/stash/internal/manager/config"
 	"github.com/stashapp/stash/pkg/fsutil"
+	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/models"
+
 	"golang.org/x/text/collate"
 )
 
@@ -60,9 +62,11 @@ func getParent(path string) *string {
 
 func makeConfigResult() *ConfigResult {
 	return &ConfigResult{
-		General:   makeConfigGeneralResult(),
-		Interface: makeConfigInterfaceResult(),
-		Dlna:      makeConfigDLNAResult(),
+		General:    makeConfigGeneralResult(),
+		Automation: makeConfigAutomationResult(),
+		Interface:  makeConfigInterfaceResult(),
+		Dlna:       makeConfigDLNAResult(),
+
 		Scraping:  makeConfigScrapingResult(),
 		Defaults:  makeConfigDefaultsResult(),
 		UI:        makeConfigUIResult(),
@@ -138,12 +142,28 @@ func makeConfigGeneralResult() *ConfigGeneralResult {
 		DrawFunscriptHeatmapRange:     config.GetDrawFunscriptHeatmapRange(),
 		ScraperPackageSources:         config.GetScraperPackageSources(),
 		PluginPackageSources:          config.GetPluginPackageSources(),
-		CloudSyncSupabaseURL:          config.GetCloudSyncSupabaseURL(),
-		CloudSyncSupabaseKey:          config.GetCloudSyncSupabaseKey(),
-		CloudSyncSupabaseBucket:       config.GetCloudSyncSupabaseBucket(),
 		CloudSyncAutoPush:             config.GetCloudSyncAutoPush(),
 	}
 }
+
+func makeConfigAutomationResult() *ConfigAutomationResult {
+	config := config.GetInstance()
+	res := &ConfigAutomationResult{
+		CloudSyncSupabaseURL:    config.GetCloudSyncSupabaseURL(),
+		CloudSyncSupabaseKey:    config.GetCloudSyncSupabaseKey(),
+		CloudSyncSupabaseBucket: config.GetCloudSyncSupabaseBucket(),
+		CloudSyncAutoPush:       config.GetCloudSyncAutoPush(),
+		CloudPull:               config.GetAutomationCloudPull(),
+		CloudPush:               config.GetAutomationCloudPush(),
+		StartupScan:             config.GetAutomationStartupScan(),
+		StartupIdentify:         config.GetAutomationStartupIdentify(),
+	}
+	logger.Infof("Automation Config: URL=%s, Key=%s, Bucket=%s, AutoPush=%v, Pull=%v, Push=%v, Scan=%v, ID=%v",
+		res.CloudSyncSupabaseURL, "REDACTED", res.CloudSyncSupabaseBucket, res.CloudSyncAutoPush,
+		res.CloudPull, res.CloudPush, res.StartupScan, res.StartupIdentify)
+	return res
+}
+
 
 func makeConfigInterfaceResult() *ConfigInterfaceResult {
 	config := config.GetInstance()

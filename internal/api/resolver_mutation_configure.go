@@ -434,12 +434,50 @@ func (r *mutationResolver) ConfigureGeneral(ctx context.Context, input ConfigGen
 		refreshPluginSource = true
 	}
 
+	if err := c.Write(); err != nil {
+		return makeConfigGeneralResult(), err
+	}
+
+	mgr := manager.GetInstance()
+	if refreshScraperCache {
+		mgr.RefreshScraperCache()
+	}
+	if refreshPluginCache {
+		mgr.RefreshPluginCache()
+	}
+	if refreshStreamManager {
+		mgr.RefreshStreamManager()
+	}
+	if refreshBlobStorage {
+		mgr.SetBlobStoreOptions()
+	}
+	if refreshScraperSource {
+		mgr.RefreshScraperSourceManager()
+	}
+	if refreshPluginSource {
+		mgr.RefreshPluginSourceManager()
+	}
+	if refreshFfmpeg {
+		mgr.RefreshFFMpeg(ctx)
+	}
+
+	return makeConfigGeneralResult(), nil
+}
+
+
+
+func (r *mutationResolver) ConfigureAutomation(ctx context.Context, input ConfigAutomationInput) (*ConfigAutomationResult, error) {
+	c := config.GetInstance()
+
+	logger.Infof("ConfigureAutomation: URL=%v, AutoPush=%v, Pull=%v, Push=%v, Scan=%v, ID=%v",
+		input.CloudSyncSupabaseURL, input.CloudSyncAutoPush, input.CloudPull, input.CloudPush, input.StartupScan, input.StartupIdentify)
+
 	r.setConfigString(config.CloudSyncSupabaseURL, input.CloudSyncSupabaseURL)
 	r.setConfigString(config.CloudSyncSupabaseKey, input.CloudSyncSupabaseKey)
 	r.setConfigString(config.CloudSyncSupabaseBucket, input.CloudSyncSupabaseBucket)
 	r.setConfigBool(config.CloudSyncAutoPush, input.CloudSyncAutoPush)
+	
 	// Auto-enable cloud push when supabase credentials become fully configured
-	// and the user didn't explicitly set the flag in this request.
 	if input.CloudSyncAutoPush == nil {
 		if c.GetCloudSyncSupabaseURL() != "" && c.GetCloudSyncSupabaseKey() != "" && c.GetCloudSyncSupabaseBucket() != "" {
 			boolTrue := true
@@ -447,11 +485,17 @@ func (r *mutationResolver) ConfigureGeneral(ctx context.Context, input ConfigGen
 		}
 	}
 
+	r.setConfigBool(config.AutomationCloudPull, input.CloudPull)
+	r.setConfigBool(config.AutomationCloudPush, input.CloudPush)
+	r.setConfigBool(config.AutomationStartupScan, input.StartupScan)
+	r.setConfigBool(config.AutomationStartupIdentify, input.StartupIdentify)
+
+
 	if err := c.Write(); err != nil {
-		return makeConfigGeneralResult(), err
+		return nil, err
 	}
 
-	// Persist cloud sync settings to SQLite so they are included in cloud sync.
+	// Persist automation/cloud sync settings to AppSettings for cloud distribution.
 	repo := manager.GetInstance().Repository
 	_ = repo.WithTxn(ctx, func(ctx context.Context) error {
 		pairs := []struct{ k, v string }{
@@ -459,43 +503,22 @@ func (r *mutationResolver) ConfigureGeneral(ctx context.Context, input ConfigGen
 			{config.CloudSyncSupabaseKey, c.GetCloudSyncSupabaseKey()},
 			{config.CloudSyncSupabaseBucket, c.GetCloudSyncSupabaseBucket()},
 			{config.CloudSyncAutoPush, fmt.Sprintf("%v", c.GetCloudSyncAutoPush())},
+			{config.AutomationCloudPull, fmt.Sprintf("%v", c.GetAutomationCloudPull())},
+			{config.AutomationCloudPush, fmt.Sprintf("%v", c.GetAutomationCloudPush())},
+			{config.AutomationStartupScan, fmt.Sprintf("%v", c.GetAutomationStartupScan())},
+			{config.AutomationStartupIdentify, fmt.Sprintf("%v", c.GetAutomationStartupIdentify())},
 		}
 		for _, p := range pairs {
-			if err := repo.AppSettings.SetSetting(ctx, p.k, p.v); err != nil {
-				logger.Warnf("failed to persist cloud setting %s to sqlite: %v", p.k, err)
-			}
+			_ = repo.AppSettings.SetSetting(ctx, p.k, p.v)
 		}
+
 		return nil
 	})
 
 	manager.GetInstance().RefreshConfig()
-	if refreshScraperCache {
-		manager.GetInstance().RefreshScraperCache()
-	}
-	if refreshPluginCache {
-		manager.GetInstance().RefreshPluginCache()
-	}
-	if refreshFfmpeg {
-		manager.GetInstance().RefreshFFMpeg(ctx)
-
-		// refresh stream manager is required since ffmpeg changed
-		refreshStreamManager = true
-	}
-	if refreshStreamManager {
-		manager.GetInstance().RefreshStreamManager()
-	}
-	if refreshBlobStorage {
-		manager.GetInstance().SetBlobStoreOptions()
-	}
-	if refreshScraperSource {
-		manager.GetInstance().RefreshScraperSourceManager()
-	}
-	if refreshPluginSource {
-		manager.GetInstance().RefreshPluginSourceManager()
-	}
-
-	return makeConfigGeneralResult(), nil
+	return makeConfigAutomationResult(), nil
 }
+
 
 func (r *mutationResolver) ConfigureInterface(ctx context.Context, input ConfigInterfaceInput) (*ConfigInterfaceResult, error) {
 	c := config.GetInstance()

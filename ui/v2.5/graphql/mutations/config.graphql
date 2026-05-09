@@ -16,6 +16,13 @@ mutation ConfigureGeneral($input: ConfigGeneralInput!) {
   }
 }
 
+mutation ConfigureAutomation($input: ConfigAutomationInput!) {
+  configureAutomation(input: $input) {
+    ...ConfigAutomationData
+  }
+}
+
+
 mutation ConfigureInterface($input: ConfigInterfaceInput!) {
   configureInterface(input: $input) {
     ...ConfigInterfaceData

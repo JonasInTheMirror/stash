@@ -2696,6 +2696,12 @@ export const useConfigureGeneral = () =>
     },
   });
 
+export const useConfigureAutomation = () =>
+  GQL.useConfigureAutomationMutation({
+    update: updateConfiguration,
+  });
+
+
 export const useConfigureInterface = () =>
   GQL.useConfigureInterfaceMutation({
     update: updateConfiguration,

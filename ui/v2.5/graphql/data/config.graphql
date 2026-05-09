@@ -75,10 +75,17 @@ fragment ConfigGeneralData on ConfigGeneralResult {
     url
     local_path
   }
+}
+
+fragment ConfigAutomationData on ConfigAutomationResult {
   cloudSyncSupabaseURL
   cloudSyncSupabaseKey
   cloudSyncSupabaseBucket
   cloudSyncAutoPush
+  cloudPull
+  cloudPush
+  startupScan
+  startupIdentify
 }
 
 fragment ConfigInterfaceData on ConfigInterfaceResult {
@@ -226,6 +233,9 @@ fragment ConfigDefaultSettingsData on ConfigDefaultSettingsResult {
 fragment ConfigData on ConfigResult {
   general {
     ...ConfigGeneralData
+  }
+  automation {
+    ...ConfigAutomationData
   }
   interface {
     ...ConfigInterfaceData

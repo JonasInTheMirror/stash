@@ -12,7 +12,9 @@ import {
   useConfigureDefaults,
   useConfigureDLNA,
   useConfigureGeneral,
+  useConfigureAutomation,
   useConfigureInterface,
+
   useConfigurePlugin,
   useConfigureScraping,
   useConfigureUI,
@@ -34,6 +36,8 @@ export interface ISettingsContextState {
   dlna: GQL.ConfigDlnaInput;
   ui: IUIConfig;
   plugins: PluginConfigs;
+  automation: GQL.ConfigAutomationInput;
+
 
   advancedMode: boolean;
 
@@ -50,7 +54,9 @@ export interface ISettingsContextState {
     pluginID: string,
     input: Record<string, unknown>
   ) => void;
+  saveAutomation: (input: Partial<GQL.ConfigAutomationInput>) => void;
   setAdvancedMode: (value: boolean) => void;
+
 
   refetch: () => void;
 }
@@ -67,6 +73,8 @@ const emptyState: ISettingsContextState = {
   dlna: {},
   ui: {},
   plugins: {},
+  automation: {},
+
 
   advancedMode: false,
 
@@ -79,7 +87,9 @@ const emptyState: ISettingsContextState = {
   saveDLNA: noop,
   saveUI: noop,
   savePluginSettings: noop,
+  saveAutomation: noop,
   setAdvancedMode: noop,
+
 
   refetch: noop,
 };
@@ -144,6 +154,11 @@ export const SettingsContext: React.FC = ({ children }) => {
   const [plugins, setPlugins] = useState<PluginConfigs>({});
   const [pendingPlugins, setPendingPlugins] = useState<PluginConfigs>();
   const [updatePluginConfig] = useConfigurePlugin();
+  
+  const [automation, setAutomation] = useState<GQL.ConfigAutomationInput>({});
+  const [pendingAutomation, setPendingAutomation] = useState<GQL.ConfigAutomationInput>();
+  const [updateAutomationConfig] = useConfigureAutomation();
+
 
   const [updateSuccess, setUpdateSuccess] = useState<boolean>();
 
@@ -152,22 +167,34 @@ export const SettingsContext: React.FC = ({ children }) => {
   useEffect(() => {
     if (!data?.configuration || error) return;
 
-    // always set api key
-    setApiKey(data.configuration.general.apiKey);
-
     // only initialise once - assume we have control over these settings and
     // they aren't modified elsewhere
     if (initialRef.current) return;
     initialRef.current = true;
 
-    setGeneral({ ...withoutTypename(data.configuration.general) });
-    setIface({ ...withoutTypename(data.configuration.interface) });
-    setDefaults({ ...withoutTypename(data.configuration.defaults) });
-    setScraping({ ...withoutTypename(data.configuration.scraping) });
-    setDLNA({ ...withoutTypename(data.configuration.dlna) });
+    if (data.configuration.general) {
+      setGeneral({ ...withoutTypename(data.configuration.general) });
+      setApiKey(data.configuration.general.apiKey);
+    }
+    if (data.configuration.interface) {
+      setIface({ ...withoutTypename(data.configuration.interface) });
+    }
+    if (data.configuration.defaults) {
+      setDefaults({ ...withoutTypename(data.configuration.defaults) });
+    }
+    if (data.configuration.scraping) {
+      setScraping({ ...withoutTypename(data.configuration.scraping) });
+    }
+    if (data.configuration.dlna) {
+      setDLNA({ ...withoutTypename(data.configuration.dlna) });
+    }
+    if (data.configuration.automation) {
+      setAutomation({ ...withoutTypename(data.configuration.automation) });
+    }
     setUI(data.configuration.ui);
     setPlugins(data.configuration.plugins);
   }, [data, error]);
+
 
   const resetSuccess = useDebounce(() => setUpdateSuccess(undefined), 4000);
 
@@ -534,6 +561,55 @@ export const SettingsContext: React.FC = ({ children }) => {
     });
   }
 
+  const saveAutomationConfig = useDebounce(
+    async (input: GQL.ConfigAutomationInput) => {
+      try {
+        setUpdateSuccess(undefined);
+        await updateAutomationConfig({
+          variables: {
+            input,
+          },
+        });
+
+        setPendingAutomation(undefined);
+        onSuccess();
+      } catch (e) {
+        onError(e);
+      }
+    },
+    500
+  );
+
+  useEffect(() => {
+    if (!pendingAutomation) {
+      return;
+    }
+
+    saveAutomationConfig(pendingAutomation);
+  }, [pendingAutomation, saveAutomationConfig]);
+
+  function saveAutomation(input: Partial<GQL.ConfigAutomationInput>) {
+    if (!automation) {
+      return;
+    }
+
+    setAutomation({
+      ...automation,
+      ...input,
+    });
+
+    setPendingAutomation((current) => {
+      if (!current) {
+        return input;
+      }
+      return {
+        ...current,
+        ...input,
+      };
+    });
+  }
+
+
   function maybeRenderLoadingIndicator() {
     if (updateSuccess === false) {
       return (
@@ -550,7 +626,8 @@ export const SettingsContext: React.FC = ({ children }) => {
       pendingScraping ||
       pendingDLNA ||
       pendingUI ||
-      pendingPlugins
+      pendingPlugins ||
+      pendingAutomation
     ) {
       return (
         <div className="loading-indicator">
@@ -583,6 +660,7 @@ export const SettingsContext: React.FC = ({ children }) => {
         dlna,
         ui,
         plugins,
+        automation,
         advancedMode: ui.advancedMode ?? false,
         saveGeneral,
         saveInterface,
@@ -592,8 +670,10 @@ export const SettingsContext: React.FC = ({ children }) => {
         saveUI,
         refetch,
         savePluginSettings,
+        saveAutomation,
         setAdvancedMode,
       }}
+
     >
       {maybeRenderLoadingIndicator()}
       {children}

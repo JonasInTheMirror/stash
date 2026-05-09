@@ -444,6 +444,10 @@ func (s stashboxSource) ScrapeScenes(ctx context.Context, sceneID int) ([]*model
 		scene, err := instance.Repository.Scene.Find(ctx, sceneID)
 		if err == nil && scene != nil {
 			title = scene.Title
+			if title == "" {
+				base := filepath.Base(scene.Path)
+				title = strings.TrimSuffix(base, filepath.Ext(base))
+			}
 		}
 		return nil
 	}); err != nil {

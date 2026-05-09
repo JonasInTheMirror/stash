@@ -179,14 +179,9 @@ input ConfigGeneralInput {
   stashBoxes: [StashBoxInput!]
   "Python path - resolved using path if unset"
   pythonPath: String
-  "Supabase URL for Cloud Sync"
-  cloudSyncSupabaseURL: String
-  "Supabase Key for Cloud Sync"
-  cloudSyncSupabaseKey: String
-  "Supabase Bucket for Cloud Sync"
-  cloudSyncSupabaseBucket: String
   "Automatically push to cloud daily"
   cloudSyncAutoPush: Boolean
+
 
   "Source of scraper packages"
   scraperPackageSources: [PackageSourceInput!]
@@ -337,14 +332,9 @@ type ConfigGeneralResult {
   stashBoxes: [StashBox!]!
   "Python path - resolved using path if unset"
   pythonPath: String!
-  "Supabase URL for Cloud Sync"
-  cloudSyncSupabaseURL: String!
-  "Supabase Key for Cloud Sync"
-  cloudSyncSupabaseKey: String!
-  "Supabase Bucket for Cloud Sync"
-  cloudSyncSupabaseBucket: String!
   "Automatically push to cloud daily"
   cloudSyncAutoPush: Boolean!
+
 
   "Source of scraper packages"
   scraperPackageSources: [PackageSource!]!
@@ -606,6 +596,7 @@ input ConfigDefaultSettingsInput {
 "All configuration settings"
 type ConfigResult {
   general: ConfigGeneralResult!
+  automation: ConfigAutomationResult!
   interface: ConfigInterfaceResult!
   dlna: ConfigDLNAResult!
   scraping: ConfigScrapingResult!
@@ -613,6 +604,29 @@ type ConfigResult {
   ui: Map!
   plugins(include: [ID!]): PluginConfigMap!
 }
+
+input ConfigAutomationInput {
+  cloudSyncSupabaseURL: String
+  cloudSyncSupabaseKey: String
+  cloudSyncSupabaseBucket: String
+  cloudSyncAutoPush: Boolean
+  cloudPull: Boolean
+  cloudPush: Boolean
+  startupScan: Boolean
+  startupIdentify: Boolean
+}
+
+type ConfigAutomationResult {
+  cloudSyncSupabaseURL: String!
+  cloudSyncSupabaseKey: String!
+  cloudSyncSupabaseBucket: String!
+  cloudSyncAutoPush: Boolean!
+  cloudPull: Boolean!
+  cloudPush: Boolean!
+  startupScan: Boolean!
+  startupIdentify: Boolean!
+}
+
 
 "Directory structure of a path"
 type Directory {
