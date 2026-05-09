@@ -883,6 +883,10 @@ func (m *Manager) TriggerCloudPullOnStartup() {
 	if m.Config.GetCloudSyncSupabaseURL() == "" || m.Config.GetCloudSyncSupabaseKey() == "" {
 		return
 	}
+	if !m.Config.GetAutomationCloudPull() {
+		logger.Info("Cloud Sync pull on startup skipped (disabled in Automation settings).")
+		return
+	}
 
 	time.AfterFunc(2*time.Second, func() {
 		logger.Infof("Triggering Cloud Sync pull on startup...")

@@ -86,6 +86,8 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 
 		if scanOptions != nil {
 			identifyOptions.ScanRescan = scanOptions.Rescan
+		} else {
+			identifyOptions.ScanRescan = true
 		}
 
 		identifyJob := CreateIdentifyJob(*identifyOptions)
