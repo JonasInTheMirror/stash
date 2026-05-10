@@ -209,6 +209,9 @@ func (j *IdentifyJob) identifyAllScenes(ctx context.Context, sources []identify.
 					continue
 				}
 				j.identifySceneOnly(ctx, s, sources)
+				if job.IsCancelled(ctx) {
+					continue
+				}
 				refineCh <- s
 			}
 		}()

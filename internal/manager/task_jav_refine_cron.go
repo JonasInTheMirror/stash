@@ -44,7 +44,13 @@ func StartJAVRefineCron(ctx context.Context) {
 }
 
 func submitJAVRefineJob(ctx context.Context) {
-	instance.JobManager.Add(ctx, "JAV Refine (auto-retry unrefined)", &retryUnrefinedJAVJob{})
+	const javRefineDesc = "JAV Refine (auto-retry unrefined)"
+	for _, j := range instance.JobManager.GetQueue() {
+		if j.Description == javRefineDesc {
+			return
+		}
+	}
+	instance.JobManager.Add(ctx, javRefineDesc, &retryUnrefinedJAVJob{})
 }
 
 // retryUnrefinedJAVJob implements job.JobExec.
@@ -63,8 +69,6 @@ func (j *retryUnrefinedJAVJob) Execute(ctx context.Context, progress *job.Progre
 	titleSuffix := " | "
 	titleModifier := models.CriterionModifierExcludes
 
-	organizedFalse := false
-
 	sceneFilter := &models.SceneFilterType{
 		URL: &models.StringCriterionInput{
 			Value:    r18Value,
@@ -74,7 +78,6 @@ func (j *retryUnrefinedJAVJob) Execute(ctx context.Context, progress *job.Progre
 			Value:    titleSuffix,
 			Modifier: titleModifier,
 		},
-		Organized: &organizedFalse,
 	}
 
 	sort := "path"

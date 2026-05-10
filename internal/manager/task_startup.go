@@ -96,11 +96,6 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 			stats.Status = "PARTIAL_FAILURE"
 		}
 
-		logger.Info("Startup sequence: Starting JAV Refine (retry failures)...")
-		javRefineJob := &retryUnrefinedJAVJob{}
-		if err := javRefineJob.Execute(ctx, progress); err != nil {
-			logger.Errorf("Startup sequence: JAV Refine failed: %v", err)
-		}
 	} else {
 		logger.Info("Startup sequence: Identify skipped (disabled in Automation settings).")
 	}
