@@ -76,71 +76,73 @@ func (j *IdentifyJob) Execute(ctx context.Context, progress *job.Progress) error
 	// otherwise, batch query for all scenes - ordering by path
 	// don't use a transaction to query scenes
 	r := instance.Repository
-	if err := r.WithDB(ctx, func(ctx context.Context) error {
-		if len(j.input.SceneIDs) == 0 {
-			return j.identifyAllScenes(ctx, sources)
+	if len(j.input.SceneIDs) == 0 {
+		if err := j.identifyAllScenes(ctx, sources); err != nil {
+			logger.Errorf("error encountered while identifying scenes: %v", err)
 		}
-
-		sceneIDs, err := stringslice.StringSliceToIntSlice(j.input.SceneIDs)
-		if err != nil {
-			return fmt.Errorf("invalid scene IDs: %w", err)
-		}
-
-		progress.SetTotal(len(sceneIDs))
-
-		// Parallelize identification of specific IDs
-		const numIdentifyWorkers = 100
-
-		idCh := make(chan int, len(sceneIDs))
-		for _, id := range sceneIDs {
-			idCh <- id
-		}
-		close(idCh)
-
-		// Check if we should skip organized scenes based on the Scan Rescan setting
-		// If Rescan is true, we process everything. If false, we skip organized.
-		skipOrganized := !j.input.ScanRescan
-
-		var wg sync.WaitGroup
-		for i := 0; i < numIdentifyWorkers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for id := range idCh {
-					if job.IsCancelled(ctx) {
-						continue
-					}
-
-					scene, err := r.Scene.Find(ctx, id)
-					if err != nil {
-						logger.Errorf("identify: finding scene id %d: %v", id, err)
-						progress.Increment()
-						continue
-					}
-					if scene == nil {
-						logger.Warnf("identify: scene id %d not found", id)
-						progress.Increment()
-						continue
-					}
-
-					if skipOrganized && scene.Organized {
-						logger.Debugf("identify: skipping organized scene %d", id)
-						progress.Increment()
-						continue
-					}
-
-					j.identifyScene(ctx, scene, sources)
-				}
-			}()
-		}
-		wg.Wait()
-
-
+		instance.TriggerCloudSync()
 		return nil
-
-	}); err != nil {
-		logger.Errorf("error encountered while identifying scenes: %v", err)
 	}
+
+	sceneIDs, err := stringslice.StringSliceToIntSlice(j.input.SceneIDs)
+	if err != nil {
+		return fmt.Errorf("invalid scene IDs: %w", err)
+	}
+
+	progress.SetTotal(len(sceneIDs))
+
+	// Scale specific ID workers based on user's parallel tasks setting (clamped to 10)
+	numIdentifyWorkers := instance.Config.GetParallelTasksWithAutoDetection()
+	if numIdentifyWorkers < 1 {
+		numIdentifyWorkers = 1
+	}
+	if numIdentifyWorkers > 10 {
+		numIdentifyWorkers = 10
+	}
+
+	idCh := make(chan int, len(sceneIDs))
+	for _, id := range sceneIDs {
+		idCh <- id
+	}
+	close(idCh)
+
+	// Check if we should skip organized scenes based on the Scan Rescan setting
+	// If Rescan is true, we process everything. If false, we skip organized.
+	skipOrganized := !j.input.ScanRescan
+
+	var wg sync.WaitGroup
+	for i := 0; i < numIdentifyWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range idCh {
+				if job.IsCancelled(ctx) {
+					continue
+				}
+
+				scene, err := r.Scene.Find(ctx, id)
+				if err != nil {
+					logger.Errorf("identify: finding scene id %d: %v", id, err)
+					progress.Increment()
+					continue
+				}
+				if scene == nil {
+					logger.Warnf("identify: scene id %d not found", id)
+					progress.Increment()
+					continue
+				}
+
+				if skipOrganized && scene.Organized {
+					logger.Debugf("identify: skipping organized scene %d", id)
+					progress.Increment()
+					continue
+				}
+
+				j.identifyScene(ctx, scene, sources)
+			}
+		}()
+	}
+	wg.Wait()
 
 	instance.TriggerCloudSync()
 	return nil
@@ -190,13 +192,20 @@ func (j *IdentifyJob) identifyAllScenes(ctx context.Context, sources []identify.
 
 	wantOrganized := j.wantsOrganized()
 
-	// Two-stage pipeline: many fast identify workers feed a small pool of refine workers.
+	// Two-stage pipeline: fast identify workers feed a small pool of refine workers.
 	// Refine is throttled by the global r18Limiter (1 req/2s) so worker count just
 	// controls queue depth — keep it small to avoid goroutine pile-up.
-	const numIdentifyWorkers = 100
-	const numRefineWorkers = 5
-	identifyCh := make(chan *models.Scene, numIdentifyWorkers)
-	refineCh := make(chan *models.Scene, numIdentifyWorkers*3)
+	numIdentifyWorkers := instance.Config.GetParallelTasksWithAutoDetection()
+	if numIdentifyWorkers < 1 {
+		numIdentifyWorkers = 1
+	}
+	if numIdentifyWorkers > 10 {
+		numIdentifyWorkers = 10 // Clamp to prevent rate limits on external APIs
+	}
+	const numRefineWorkers = 2
+
+	identifyCh := make(chan *models.Scene, numIdentifyWorkers*2)
+	refineCh := make(chan *models.Scene, numIdentifyWorkers*4)
 
 	// Stage 1: fast identify workers
 	var identifyWg sync.WaitGroup
@@ -555,7 +564,7 @@ var r18CIDRE = regexp.MustCompile(`(?i)(?:id=|combined=|cid=)([^/&?]+)`)
 // On 429 it honours the Retry-After header (or waits 60s) before retrying.
 // Returns true when an English title was found and written to the DB.
 func (j *IdentifyJob) refineJAVTitle(ctx context.Context, s *models.Scene) bool {
-	const maxRetries = 20
+	const maxRetries = 3
 	const baseDelay = 3 * time.Second
 
 	var lastErr error
@@ -577,6 +586,9 @@ func (j *IdentifyJob) refineJAVTitle(ctx context.Context, s *models.Scene) bool 
 			logger.Warnf("identify: scene %d rate limited by r18.dev, waiting %v (attempt %d/%d)", s.ID, delay, attempt+1, maxRetries)
 		} else {
 			backoff := time.Duration(math.Pow(2, float64(attempt))) * baseDelay
+			if backoff > 10*time.Second {
+				backoff = 10 * time.Second
+			}
 			delay = backoff + time.Duration(rand.Intn(2000))*time.Millisecond
 			logger.Debugf("identify: scene %d retry %d/%d after error: %v, waiting %v", s.ID, attempt+1, maxRetries, err, delay)
 		}

@@ -132,14 +132,12 @@ func (j *retryUnrefinedJAVJob) Execute(ctx context.Context, progress *job.Progre
 		}()
 	}
 
-	if err := r.WithDB(ctx, func(ctx context.Context) error {
-		return scene.BatchProcess(ctx, r.Scene, sceneFilter, findFilter, func(s *models.Scene) error {
-			if job.IsCancelled(ctx) {
-				return nil
-			}
-			workCh <- s
+	if err := scene.BatchProcess(ctx, r.Scene, sceneFilter, findFilter, func(s *models.Scene) error {
+		if job.IsCancelled(ctx) {
 			return nil
-		})
+		}
+		workCh <- s
+		return nil
 	}); err != nil {
 		logger.Errorf("jav-refine-cron: batch process error: %v", err)
 	}

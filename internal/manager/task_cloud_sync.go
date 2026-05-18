@@ -24,7 +24,7 @@ const (
 	cloudTableScenes      = "stash_scenes"
 	cloudTableAppSettings = "stash_app_settings"
 	cloudTableHistory     = "stash_sync_history"
-	cloudBatchSize        = 500
+	cloudBatchSize        = 100
 )
 
 type cloudSyncHistoryRow struct {
@@ -54,6 +54,7 @@ func CreateCloudPullTask() *CloudSyncTask {
 
 func (t *CloudSyncTask) Execute(ctx context.Context, progress *job.Progress) error {
 	cfg := config.GetInstance()
+
 	supabaseURL := cfg.GetCloudSyncSupabaseURL()
 	supabaseKey := cfg.GetCloudSyncSupabaseKey()
 
@@ -120,7 +121,7 @@ func (c *cloudClient) upsertWithConflict(ctx context.Context, table string, onCo
 		}
 
 
-		client := &http.Client{Timeout: 5 * time.Minute}
+		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -247,10 +248,16 @@ type cloudTagRow struct {
 	UpdatedAt   string   `json:"updated_at"`
 }
 
-func allPages() *models.FindFilterType {
-	pp := -1
-	return &models.FindFilterType{PerPage: &pp}
+func pageFilter(page int) *models.FindFilterType {
+	ps := cloudBatchSize
+	sort := "id"
+	return &models.FindFilterType{
+		Page:    &page,
+		PerPage: &ps,
+		Sort:    &sort,
+	}
 }
+
 
 func tsFilter(since string) *models.TimestampCriterionInput {
 	if since == "" {
@@ -318,221 +325,313 @@ func (t *CloudSyncTask) PushHistory(ctx context.Context, row cloudSyncHistoryRow
 
 func (t *CloudSyncTask) pushScenes(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
 	logger.Infof("cloud sync: pushing scenes changed since %s...", since)
-	var rows []cloudSceneRow
-
-
-	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
-		filter := &models.SceneFilterType{}
-		if f := tsFilter(since); f != nil {
-			filter.UpdatedAt = f
+	
+	page := 1
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
-		result, err := repo.Scene.Query(ctx, models.SceneQueryOptions{
-			QueryOptions: models.QueryOptions{FindFilter: allPages()},
-			SceneFilter:  filter,
+		var rows []cloudSceneRow
+		err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
+			filter := &models.SceneFilterType{}
+			if f := tsFilter(since); f != nil {
+				filter.UpdatedAt = f
+			}
+
+			// Use paginated filter with ID sorting
+			result, err := repo.Scene.Query(ctx, models.SceneQueryOptions{
+				QueryOptions: models.QueryOptions{FindFilter: pageFilter(page)},
+				SceneFilter:  filter,
+			})
+
+			if err != nil {
+				return fmt.Errorf("query scenes: %w", err)
+			}
+
+			scenes, err := result.Resolve(ctx)
+			if err != nil {
+				return fmt.Errorf("resolve scenes: %w", err)
+			}
+
+			for _, s := range scenes {
+				// Explicitly load relations before calling .List() to prevent Go panic
+				_ = s.LoadURLs(ctx, repo.Scene)
+				_ = s.LoadTagIDs(ctx, repo.Scene)
+				_ = s.LoadPerformerIDs(ctx, repo.Scene)
+
+				row := cloudSceneRow{
+					ID:           s.ID,
+					Title:        s.Title,
+					Code:         s.Code,
+					Details:      s.Details,
+					Director:     s.Director,
+					Rating:       s.Rating,
+					Organized:    s.Organized,
+					StudioID:     s.StudioID,
+					URLs:         s.URLs.List(),
+					TagIDs:       s.TagIDs.List(),
+					PerformerIDs: s.PerformerIDs.List(),
+					UpdatedAt:    s.UpdatedAt.UTC().Format(time.RFC3339),
+				}
+				if s.Date != nil {
+					d := s.Date.String()
+					row.Date = &d
+				}
+				rows = append(rows, row)
+			}
+			return nil
 		})
+
 		if err != nil {
-			return fmt.Errorf("query scenes: %w", err)
+			return err
 		}
 
-		scenes, err := result.Resolve(ctx)
-		if err != nil {
-			return fmt.Errorf("resolve scenes: %w", err)
+		if len(rows) == 0 {
+			break
 		}
 
-		for _, s := range scenes {
-			// Explicitly load relations before calling .List() to prevent Go panic
-			if err := s.LoadURLs(ctx, repo.Scene); err != nil {
-				logger.Warnf("cloud sync: load scene %d urls: %v", s.ID, err)
-			}
-			if err := s.LoadTagIDs(ctx, repo.Scene); err != nil {
-				logger.Warnf("cloud sync: load scene %d tags: %v", s.ID, err)
-			}
-			if err := s.LoadPerformerIDs(ctx, repo.Scene); err != nil {
-				logger.Warnf("cloud sync: load scene %d performers: %v", s.ID, err)
-			}
-
-			row := cloudSceneRow{
-				ID:           s.ID,
-				Title:        s.Title,
-				Code:         s.Code,
-				Details:      s.Details,
-				Director:     s.Director,
-				Rating:       s.Rating,
-				Organized:    s.Organized,
-				StudioID:     s.StudioID,
-				URLs:         s.URLs.List(),
-				TagIDs:       s.TagIDs.List(),
-				PerformerIDs: s.PerformerIDs.List(),
-				UpdatedAt:    s.UpdatedAt.UTC().Format(time.RFC3339),
-			}
-			if s.Date != nil {
-				d := s.Date.String()
-				row.Date = &d
-			}
-			rows = append(rows, row)
+		if err := c.upsertWithConflict(ctx, cloudTableScenes, "id", rows); err != nil {
+			return fmt.Errorf("upsert scenes page %d: %w", page, err)
 		}
-		return nil
-	}); err != nil {
-		return err
+
+		logger.Infof("cloud sync: pushed page %d of scenes", page)
+
+
+		// If we got fewer rows than requested, we're at the end
+		if len(rows) < cloudBatchSize {
+			break
+		}
+		page++
 	}
 
-	return upsertBatched(ctx, c, cloudTableScenes, "id", rows)
+	return nil
 }
+
 
 func (t *CloudSyncTask) pushPerformers(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
 	logger.Infof("cloud sync: pushing performers changed since %s...", since)
-	var rows []cloudPerformerRow
-
-	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
-		filter := &models.PerformerFilterType{}
-		if f := tsFilter(since); f != nil {
-			filter.UpdatedAt = f
+	
+	page := 1
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
-		performers, _, err := repo.Performer.Query(ctx, filter, allPages())
+		var rows []cloudPerformerRow
+		err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
+			filter := &models.PerformerFilterType{}
+			if f := tsFilter(since); f != nil {
+				filter.UpdatedAt = f
+			}
+
+			performers, _, err := repo.Performer.Query(ctx, filter, pageFilter(page))
+
+			if err != nil {
+				return fmt.Errorf("query performers: %w", err)
+			}
+
+			for _, p := range performers {
+				_ = p.LoadURLs(ctx, repo.Performer)
+				_ = p.LoadTagIDs(ctx, repo.Performer)
+				_ = p.LoadAliases(ctx, repo.Performer)
+
+				row := cloudPerformerRow{
+					ID:             p.ID,
+					Name:           p.Name,
+					Disambiguation: p.Disambiguation,
+					Ethnicity:      p.Ethnicity,
+					Country:        p.Country,
+					EyeColor:       p.EyeColor,
+					Height:         p.Height,
+					Weight:         p.Weight,
+					HairColor:      p.HairColor,
+					Favorite:       p.Favorite,
+					Rating:         p.Rating,
+					Details:        p.Details,
+					URLs:           p.URLs.List(),
+					TagIDs:         p.TagIDs.List(),
+					Aliases:        p.Aliases.List(),
+					UpdatedAt:      p.UpdatedAt.UTC().Format(time.RFC3339),
+				}
+				if p.Gender != nil {
+					g := string(*p.Gender)
+					row.Gender = &g
+				}
+				if p.Birthdate != nil {
+					d := p.Birthdate.String()
+					row.Birthdate = &d
+				}
+				rows = append(rows, row)
+			}
+			return nil
+		})
+
 		if err != nil {
-			return fmt.Errorf("query performers: %w", err)
+			return err
 		}
 
-		for _, p := range performers {
-			// Explicitly load relations before calling .List() to prevent Go panic
-			if err := p.LoadURLs(ctx, repo.Performer); err != nil {
-				logger.Warnf("cloud sync: load performer %d urls: %v", p.ID, err)
-			}
-			if err := p.LoadTagIDs(ctx, repo.Performer); err != nil {
-				logger.Warnf("cloud sync: load performer %d tags: %v", p.ID, err)
-			}
-			if err := p.LoadAliases(ctx, repo.Performer); err != nil {
-				logger.Warnf("cloud sync: load performer %d aliases: %v", p.ID, err)
-			}
-
-			row := cloudPerformerRow{
-				ID:             p.ID,
-				Name:           p.Name,
-				Disambiguation: p.Disambiguation,
-				Ethnicity:      p.Ethnicity,
-				Country:        p.Country,
-				EyeColor:       p.EyeColor,
-				Height:         p.Height,
-				Weight:         p.Weight,
-				HairColor:      p.HairColor,
-				Favorite:       p.Favorite,
-				Rating:         p.Rating,
-				Details:        p.Details,
-				URLs:           p.URLs.List(),
-				TagIDs:         p.TagIDs.List(),
-				Aliases:        p.Aliases.List(),
-				UpdatedAt:      p.UpdatedAt.UTC().Format(time.RFC3339),
-			}
-			if p.Gender != nil {
-				g := string(*p.Gender)
-				row.Gender = &g
-			}
-			if p.Birthdate != nil {
-				d := p.Birthdate.String()
-				row.Birthdate = &d
-			}
-			rows = append(rows, row)
+		if len(rows) == 0 {
+			break
 		}
-		return nil
-	}); err != nil {
-		return err
+
+		if err := c.upsertWithConflict(ctx, cloudTablePerformers, "id", rows); err != nil {
+			return fmt.Errorf("upsert performers page %d: %w", page, err)
+		}
+
+		logger.Infof("cloud sync: pushed page %d of performers", page)
+
+
+		if len(rows) < cloudBatchSize {
+			break
+		}
+		page++
 	}
 
-	return upsertBatched(ctx, c, cloudTablePerformers, "id", rows)
+	return nil
 }
+
 
 func (t *CloudSyncTask) pushStudios(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
 	logger.Infof("cloud sync: pushing studios changed since %s...", since)
-	var rows []cloudStudioRow
-
-	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
-		filter := &models.StudioFilterType{}
-		if f := tsFilter(since); f != nil {
-			filter.UpdatedAt = f
+	
+	page := 1
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
-		studios, _, err := repo.Studio.Query(ctx, filter, allPages())
+		var rows []cloudStudioRow
+		err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
+			filter := &models.StudioFilterType{}
+			if f := tsFilter(since); f != nil {
+				filter.UpdatedAt = f
+			}
+
+			studios, _, err := repo.Studio.Query(ctx, filter, pageFilter(page))
+
+			if err != nil {
+				return fmt.Errorf("query studios: %w", err)
+			}
+
+			for _, s := range studios {
+				_ = s.LoadURLs(ctx, repo.Studio)
+				_ = s.LoadAliases(ctx, repo.Studio)
+
+				rows = append(rows, cloudStudioRow{
+					ID:        s.ID,
+					Name:      s.Name,
+					ParentID:  s.ParentID,
+					Rating:    s.Rating,
+					Favorite:  s.Favorite,
+					Details:   s.Details,
+					URLs:      s.URLs.List(),
+					Aliases:   s.Aliases.List(),
+					UpdatedAt: s.UpdatedAt.UTC().Format(time.RFC3339),
+				})
+			}
+			return nil
+		})
+
 		if err != nil {
-			return fmt.Errorf("query studios: %w", err)
+			return err
 		}
 
-		for _, s := range studios {
-			// Explicitly load relations before calling .List() to prevent Go panic
-			if err := s.LoadURLs(ctx, repo.Studio); err != nil {
-				logger.Warnf("cloud sync: load studio %d urls: %v", s.ID, err)
-			}
-			if err := s.LoadAliases(ctx, repo.Studio); err != nil {
-				logger.Warnf("cloud sync: load studio %d aliases: %v", s.ID, err)
-			}
-
-			rows = append(rows, cloudStudioRow{
-				ID:        s.ID,
-				Name:      s.Name,
-				ParentID:  s.ParentID,
-				Rating:    s.Rating,
-				Favorite:  s.Favorite,
-				Details:   s.Details,
-				URLs:      s.URLs.List(),
-				Aliases:   s.Aliases.List(),
-				UpdatedAt: s.UpdatedAt.UTC().Format(time.RFC3339),
-			})
+		if len(rows) == 0 {
+			break
 		}
-		return nil
-	}); err != nil {
-		return err
+
+		if err := c.upsertWithConflict(ctx, cloudTableStudios, "id", rows); err != nil {
+			return fmt.Errorf("upsert studios page %d: %w", page, err)
+		}
+
+		logger.Infof("cloud sync: pushed page %d of studios", page)
+
+
+		if len(rows) < cloudBatchSize {
+			break
+		}
+		page++
 	}
 
-	return upsertBatched(ctx, c, cloudTableStudios, "id", rows)
+	return nil
 }
+
 
 func (t *CloudSyncTask) pushTags(ctx context.Context, c *cloudClient, repo models.Repository, since string) error {
 	logger.Infof("cloud sync: pushing tags changed since %s...", since)
-	var rows []cloudTagRow
-
-	if err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
-		filter := &models.TagFilterType{}
-		if f := tsFilter(since); f != nil {
-			filter.UpdatedAt = f
+	
+	page := 1
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
-		tags, _, err := repo.Tag.Query(ctx, filter, allPages())
+		var rows []cloudTagRow
+		err := repo.WithReadTxn(ctx, func(ctx context.Context) error {
+			filter := &models.TagFilterType{}
+			if f := tsFilter(since); f != nil {
+				filter.UpdatedAt = f
+			}
+
+			tags, _, err := repo.Tag.Query(ctx, filter, pageFilter(page))
+
+			if err != nil {
+				return fmt.Errorf("query tags: %w", err)
+			}
+
+			for _, tag := range tags {
+				_ = tag.LoadAliases(ctx, repo.Tag)
+				_ = tag.LoadParentIDs(ctx, repo.Tag)
+				_ = tag.LoadChildIDs(ctx, repo.Tag)
+
+				rows = append(rows, cloudTagRow{
+					ID:          tag.ID,
+					Name:        tag.Name,
+					SortName:    tag.SortName,
+					Description: tag.Description,
+					Favorite:    tag.Favorite,
+					Aliases:     tag.Aliases.List(),
+					ParentIDs:   tag.ParentIDs.List(),
+					ChildIDs:    tag.ChildIDs.List(),
+					UpdatedAt:   tag.UpdatedAt.UTC().Format(time.RFC3339),
+				})
+			}
+			return nil
+		})
+
 		if err != nil {
-			return fmt.Errorf("query tags: %w", err)
+			return err
 		}
 
-		for _, tg := range tags {
-			// Explicitly load relations before calling .List() to prevent Go panic
-			if err := tg.LoadAliases(ctx, repo.Tag); err != nil {
-				logger.Warnf("cloud sync: load tag %d aliases: %v", tg.ID, err)
-			}
-			if err := tg.LoadParentIDs(ctx, repo.Tag); err != nil {
-				logger.Warnf("cloud sync: load tag %d parents: %v", tg.ID, err)
-			}
-			if err := tg.LoadChildIDs(ctx, repo.Tag); err != nil {
-				logger.Warnf("cloud sync: load tag %d children: %v", tg.ID, err)
-			}
-
-			rows = append(rows, cloudTagRow{
-				ID:          tg.ID,
-				Name:        tg.Name,
-				SortName:    tg.SortName,
-				Description: tg.Description,
-				Favorite:    tg.Favorite,
-				Aliases:     tg.Aliases.List(),
-				ParentIDs:   tg.ParentIDs.List(),
-				ChildIDs:    tg.ChildIDs.List(),
-				UpdatedAt:   tg.UpdatedAt.UTC().Format(time.RFC3339),
-			})
+		if len(rows) == 0 {
+			break
 		}
-		return nil
-	}); err != nil {
-		return err
+
+		if err := c.upsertWithConflict(ctx, cloudTableTags, "id", rows); err != nil {
+			return fmt.Errorf("upsert tags page %d: %w", page, err)
+		}
+
+		logger.Infof("cloud sync: pushed page %d of tags", page)
+
+
+		if len(rows) < cloudBatchSize {
+			break
+		}
+		page++
 	}
 
-	return upsertBatched(ctx, c, cloudTableTags, "id", rows)
+	return nil
 }
+
 
 func upsertBatched[T any](ctx context.Context, c *cloudClient, table string, onConflict string, rows []T) error {
 	if len(rows) == 0 {
@@ -861,23 +960,33 @@ var (
 	cloudSyncDebounce = 5 * time.Minute
 )
 
+
+
 func (m *Manager) TriggerCloudSync() {
 	if !m.Config.GetCloudSyncAutoPush() {
 		return
 	}
 
 	cloudSyncMu.Lock()
-	defer cloudSyncMu.Unlock()
-
 	if cloudSyncTimer != nil {
 		cloudSyncTimer.Stop()
 	}
 
 	cloudSyncTimer = time.AfterFunc(cloudSyncDebounce, func() {
+		// Check if a sync is already queued or running
+		queue := m.JobManager.GetQueue()
+		for _, j := range queue {
+			if j.Description == "Cloud Sync (Auto-Push)" {
+				return
+			}
+		}
+
 		logger.Infof("Triggering automated Cloud Sync Push due to recent metadata changes...")
 		m.JobManager.Add(context.Background(), "Cloud Sync (Auto-Push)", CreateCloudPushTask())
 	})
+	cloudSyncMu.Unlock()
 }
+
 
 func (m *Manager) TriggerCloudPullOnStartup() {
 	if m.Config.GetCloudSyncSupabaseURL() == "" || m.Config.GetCloudSyncSupabaseKey() == "" {

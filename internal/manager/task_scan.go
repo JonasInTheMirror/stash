@@ -63,8 +63,8 @@ func (j *ScanJob) Execute(ctx context.Context, progress *job.Progress) error {
 
 	start := time.Now()
 
-	// HARDEN: Use 100 workers for scanning/fingerprinting to unblock the pipeline
-	nScannerTasks := 100
+	// Use user-configured parallel tasks setting for fingerprinting & generation
+	nScannerTasks := cfg.GetParallelTasksWithAutoDetection()
 	// Use CPU-optimized count for heavy FFmpeg tasks
 	nGeneratorTasks := cfg.GetParallelTasksWithAutoDetection()
 
