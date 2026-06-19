@@ -84,11 +84,9 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 			}
 		}
 
-		if scanOptions != nil {
-			identifyOptions.ScanRescan = scanOptions.Rescan
-		} else {
-			identifyOptions.ScanRescan = true
-		}
+		// Startup identify always processes organized scenes — it's a fresh
+		// run, not a re-identify gate. This is independent of scan's Rescan.
+		identifyOptions.ProcessOrganized = &[]bool{true}[0]
 
 		identifyJob := CreateIdentifyJob(*identifyOptions)
 		if err := identifyJob.Execute(ctx, progress); err != nil {

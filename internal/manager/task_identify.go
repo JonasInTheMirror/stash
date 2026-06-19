@@ -106,9 +106,10 @@ func (j *IdentifyJob) Execute(ctx context.Context, progress *job.Progress) error
 	}
 	close(idCh)
 
-	// Check if we should skip organized scenes based on the Scan Rescan setting
-	// If Rescan is true, we process everything. If false, we skip organized.
-	skipOrganized := !j.input.ScanRescan
+	// Check if we should skip organized scenes.
+	// ProcessOrganized takes precedence; falls back to ScanRescan for backward compat.
+	processOrganized := 	j.input.ShouldProcessOrganized()
+	skipOrganized := !processOrganized
 
 	var wg sync.WaitGroup
 	for i := 0; i < numIdentifyWorkers; i++ {
@@ -250,7 +251,8 @@ func (j *IdentifyJob) identifyAllScenes(ctx context.Context, sources []identify.
 		}()
 	}
 
-	skipOrganized := !j.input.ScanRescan
+	processOrganized := 	j.input.ShouldProcessOrganized()
+	skipOrganized := !processOrganized
 
 	batchErr := scene.BatchProcess(ctx, r.Scene, sceneFilter, findFilter, func(scene *models.Scene) error {
 		if job.IsCancelled(ctx) {
@@ -649,62 +651,101 @@ func recordFailedIdentify(s *models.Scene, err error) {
 // Returns (true, nil) when an English title was found and written.
 // Returns (false, nil) when the scene has no r18 URL or no English title (not an error).
 func (j *IdentifyJob) refineJAVTitleAttempt(ctx context.Context, s *models.Scene) (bool, error) {
-	// 1. Skip if title already has " | "
 	if strings.Contains(s.Title, " | ") {
 		return false, nil
 	}
 
-	// 2. Find R18 URL — refresh scene from DB to get URLs populated by the identify step
-	scene, err := instance.Repository.Scene.Find(ctx, s.ID)
-	if err != nil {
-		return false, fmt.Errorf("finding scene: %w", err)
-	}
-	if scene == nil {
-		return false, fmt.Errorf("scene not found")
-	}
-	_ = scene.LoadURLs(ctx, instance.Repository.Scene)
+	var result bool
 
-	var r18URL string
-	for _, u := range scene.URLs.List() {
-		if strings.Contains(u, "r18.dev") || strings.Contains(u, "r18.com") {
-			r18URL = u
-			break
+	if err := txn.WithTxn(ctx, instance.Repository.TxnManager, func(ctx context.Context) error {
+		scene, err := instance.Repository.Scene.Find(ctx, s.ID)
+		if err != nil {
+			return fmt.Errorf("finding scene: %w", err)
 		}
-	}
+		if scene == nil {
+			return fmt.Errorf("scene not found")
+		}
+		_ = scene.LoadURLs(ctx, instance.Repository.Scene)
 
-	if r18URL == "" {
-		return false, nil
-	}
-
-	match := r18CIDRE.FindStringSubmatch(r18URL)
-	var cid string
-	if len(match) > 1 {
-		cid = match[1]
-	} else {
-		// Try fallback: last path segment
-		parts := strings.Split(strings.Trim(r18URL, "/"), "/")
-		if len(parts) > 0 {
-			last := parts[len(parts)-1]
-			if regexp.MustCompile(`^[a-zA-Z0-9]+$`).MatchString(last) {
-				cid = last
+		var r18URLs []string
+		for _, u := range scene.URLs.List() {
+			if strings.Contains(u, "r18.dev") || strings.Contains(u, "r18.com") {
+				r18URLs = append(r18URLs, u)
 			}
 		}
+		if len(r18URLs) == 0 {
+			return nil
+		}
+
+		for _, r18URL := range r18URLs {
+			cid := extractCID(r18URL)
+			if cid == "" {
+				continue
+			}
+
+			titleEn, skip, err := fetchR18EnglishTitle(ctx, cid)
+			if err != nil {
+				return err
+			}
+			if skip || titleEn == "" {
+				continue
+			}
+
+			newTitle := decensor(titleEn) + " | " + scene.Title
+
+			scenePartial := models.NewScenePartial()
+			scenePartial.Title = models.NewOptionalString(newTitle)
+
+			if _, err := instance.Repository.Scene.UpdatePartial(ctx, scene.ID, scenePartial); err != nil {
+				return fmt.Errorf("updating DB: %w", err)
+			}
+
+			logger.Infof("Refined JAV title for scene %d: %s (from %s)", scene.ID, newTitle, r18URL)
+			result = true
+			return nil
+		}
+
+		return nil
+	}); err != nil {
+		return false, err
 	}
 
-	if cid == "" {
-		return false, nil
-	}
+	return result, nil
+}
 
-	// 3. Fetch JSON from r18.dev — throttled by global rate limiter (1 req/2s)
+// extractCID attempts to extract a content ID from an r18 URL.
+// It checks for id=/combined=/cid= query parameters first, then
+// falls back to the last path segment.
+func extractCID(rawURL string) string {
+	match := r18CIDRE.FindStringSubmatch(rawURL)
+	if len(match) > 1 {
+		return match[1]
+	}
+	parts := strings.Split(strings.Trim(rawURL, "/"), "/")
+	if len(parts) > 0 {
+		last := parts[len(parts)-1]
+		if regexp.MustCompile(`^[a-zA-Z0-9]+$`).MatchString(last) {
+			return last
+		}
+	}
+	return ""
+}
+
+// fetchR18EnglishTitle calls the r18.dev JSON API for the given CID.
+// Returns (titleEn, skip, err) where:
+//   - (titleEn, false, nil)  — English title found
+//   - ("", true, nil)        — URL didn't have English title (skip to next)
+//   - ("", false, err)       — rate limit (retry with backoff)
+func fetchR18EnglishTitle(ctx context.Context, cid string) (string, bool, error) {
 	if err := r18Limiter.Wait(ctx); err != nil {
-		return false, fmt.Errorf("rate limiter: %w", err)
+		return "", false, fmt.Errorf("rate limiter: %w", err)
 	}
 
 	url := fmt.Sprintf("https://r18.dev/videos/vod/movies/detail/-/combined=%s/json", cid)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return false, fmt.Errorf("creating request: %w", err)
+		return "", false, fmt.Errorf("creating request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
@@ -714,7 +755,7 @@ func (j *IdentifyJob) refineJAVTitleAttempt(ctx context.Context, s *models.Scene
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("performing request: %w", err)
+		return "", false, fmt.Errorf("performing request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -725,38 +766,25 @@ func (j *IdentifyJob) refineJAVTitleAttempt(ctx context.Context, s *models.Scene
 				retryAfter = time.Duration(secs) * time.Second
 			}
 		}
-		return false, &rateLimitError{retryAfter: retryAfter}
+		return "", false, &rateLimitError{retryAfter: retryAfter}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return "", true, nil
 	}
 
 	var data struct {
 		TitleEn string `json:"title_en"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return false, fmt.Errorf("decoding JSON: %w", err)
+		return "", true, nil
 	}
 
 	if data.TitleEn == "" || data.TitleEn == "null" {
-		return false, nil
+		return "", true, nil
 	}
 
-	newTitle := decensor(data.TitleEn) + " | " + scene.Title
-
-	scenePartial := models.NewScenePartial()
-	scenePartial.Title = models.NewOptionalString(newTitle)
-
-	if err := txn.WithTxn(ctx, instance.Repository.TxnManager, func(ctx context.Context) error {
-		_, err := instance.Repository.Scene.UpdatePartial(ctx, scene.ID, scenePartial)
-		return err
-	}); err != nil {
-		return false, fmt.Errorf("updating DB: %w", err)
-	}
-
-	logger.Infof("Refined JAV title for scene %d: %s", scene.ID, newTitle)
-	return true, nil
+	return data.TitleEn, false, nil
 }
 
 func decensor(s string) string {

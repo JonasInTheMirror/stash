@@ -24,8 +24,23 @@ type Options struct {
 	SceneIDs []string `json:"sceneIDs"`
 	// paths of scenes to identify - ignored if scene ids are set
 	Paths []string `json:"paths"`
-	// Use the rescan setting from the scan preference to determine if organized scenes should be skipped
+	// When true, skip scenes that are already marked as organized.
+	// Deprecated: use ProcessOrganized instead.
 	ScanRescan bool `json:"scanRescan"`
+	// When true, scenes already marked as organized will still be processed
+	// by identify. When false, organized scenes are skipped.
+	// Defaults to true if not set.
+	ProcessOrganized *bool `json:"processOrganized"`
+}
+
+// ShouldProcessOrganized returns true when organized scenes should be
+// processed by identify. ProcessOrganized takes precedence; falls back to
+// ScanRescan for backward compatibility.
+func (o Options) ShouldProcessOrganized() bool {
+	if o.ProcessOrganized != nil {
+		return *o.ProcessOrganized
+	}
+	return o.ScanRescan
 }
 
 
