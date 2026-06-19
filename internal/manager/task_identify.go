@@ -178,14 +178,21 @@ func (j *IdentifyJob) identifyAllScenes(ctx context.Context, sources []identify.
 	// get the count
 	pp := 0
 	findFilter.PerPage = &pp
-	countResult, err := r.Scene.Query(ctx, models.SceneQueryOptions{
-		QueryOptions: models.QueryOptions{
-			FindFilter: findFilter,
-			Count:      true,
-		},
-		SceneFilter: sceneFilter,
-	})
-	if err != nil {
+	var countResult *models.SceneQueryResult
+	if err := txn.WithReadTxn(ctx, r.TxnManager, func(tCtx context.Context) error {
+		var err error
+		countResult, err = r.Scene.Query(tCtx, models.SceneQueryOptions{
+			QueryOptions: models.QueryOptions{
+				FindFilter: findFilter,
+				Count:      true,
+			},
+			SceneFilter: sceneFilter,
+		})
+		if err != nil {
+			return fmt.Errorf("error getting scene count: %w", err)
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("error getting scene count: %w", err)
 	}
 
@@ -254,18 +261,22 @@ func (j *IdentifyJob) identifyAllScenes(ctx context.Context, sources []identify.
 	processOrganized := 	j.input.ShouldProcessOrganized()
 	skipOrganized := !processOrganized
 
-	batchErr := scene.BatchProcess(ctx, r.Scene, sceneFilter, findFilter, func(scene *models.Scene) error {
-		if job.IsCancelled(ctx) {
-			return nil
-		}
+	var batchErr error
+	_ = txn.WithReadTxn(ctx, r.TxnManager, func(tCtx context.Context) error {
+		batchErr = scene.BatchProcess(tCtx, r.Scene, sceneFilter, findFilter, func(s *models.Scene) error {
+			if job.IsCancelled(ctx) {
+				return nil
+			}
 
-		if skipOrganized && scene.Organized {
-			j.progress.Increment()
-			return nil
-		}
+			if skipOrganized && s.Organized {
+				j.progress.Increment()
+				return nil
+			}
 
-		identifyCh <- scene
-		return nil
+			identifyCh <- s
+			return nil
+		})
+		return batchErr
 	})
 
 
