@@ -255,6 +255,9 @@ input IdentifyMetadataInput {
 
   "paths of scenes to identify - ignored if scene ids are set"
   paths: [String!]
+
+  "When true, scenes already marked as organized will be processed again. Default: false."
+  processOrganized: Boolean
 }
 
 # types for default options
@@ -296,6 +299,9 @@ type IdentifyMetadataTaskOptions {
   sources: [IdentifySource!]!
   "Options defined here override the configured defaults"
   options: IdentifyMetadataOptions
+
+  "When true, scenes already marked as organized will be processed again. Default: false."
+  processOrganized: Boolean
 }
 
 input ExportObjectTypeInput {

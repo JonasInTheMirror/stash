@@ -85,6 +85,7 @@ export const IdentifyDialog: React.FC<IIdentifyDialogProps> = ({
   const [showManual, setShowManual] = useState(false);
   const [settingPaths, setSettingPaths] = useState(false);
   const [animation, setAnimation] = useState(true);
+  const [processOrganized, setProcessOrganized] = useState(false);
   const [editingField, setEditingField] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
 
@@ -233,6 +234,9 @@ export const IdentifyDialog: React.FC<IIdentifyDialogProps> = ({
         .filter((s) => s) as IScraperSource[];
 
       setSources(mappedSources);
+      if (identifyDefaults.processOrganized != null) {
+        setProcessOrganized(identifyDefaults.processOrganized);
+      }
       if (identifyDefaults.options) {
         const defaultOptions = withoutTypename(identifyDefaults.options);
         defaultOptions.fieldOptions =
@@ -287,6 +291,7 @@ export const IdentifyDialog: React.FC<IIdentifyDialogProps> = ({
       options,
       sceneIDs: selectedIds,
       paths,
+      processOrganized,
     };
   }
 
@@ -467,6 +472,14 @@ export const IdentifyDialog: React.FC<IIdentifyDialogProps> = ({
           setSources={(s) => setSources(s)}
           editSource={onEditSource}
           canAdd={sources.length < allSources.length}
+        />
+        <Form.Check
+          id="skip-organized"
+          checked={!processOrganized}
+          label={intl.formatMessage({
+            id: "config.tasks.identify.skip_organized",
+          })}
+          onChange={(e) => setProcessOrganized(!e.currentTarget.checked)}
         />
         <OptionsEditor
           options={options}
