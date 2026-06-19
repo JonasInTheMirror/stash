@@ -27,6 +27,12 @@ func (a Args) XError() Args {
 	return append(a, "-xerror")
 }
 
+// ErrDetectIgnore adds the -err_detect ignore_err flag and returns the result.
+func (a Args) ErrDetectIgnore() Args {
+	return append(a, "-err_detect", "ignore_err")
+}
+
+
 // Overwrite adds the overwrite flag (-y) and returns the result.
 func (a Args) Overwrite() Args {
 	return append(a, "-y")
