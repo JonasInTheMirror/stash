@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stashapp/stash/pkg/job"
@@ -108,7 +109,6 @@ func (j *retryUnrefinedJAVJob) Execute(ctx context.Context, progress *job.Progre
 	}
 
 	logger.Infof("jav-refine-cron: %d scenes need refinement", countResult.Count)
-	progress.SetTotal(countResult.Count)
 
 	// Use a small pool of workers throttled by the shared r18Limiter.
 	const numWorkers = 3
@@ -132,17 +132,25 @@ func (j *retryUnrefinedJAVJob) Execute(ctx context.Context, progress *job.Progre
 		}()
 	}
 
+	// Track how many scenes were actually dispatched (may differ from
+	// countResult if scenes were refined between the count query and now).
+	var dispatched int64
 	if err := r.WithReadTxn(ctx, func(ctx context.Context) error {
 		return scene.BatchProcess(ctx, r.Scene, sceneFilter, findFilter, func(s *models.Scene) error {
 			if job.IsCancelled(ctx) {
 				return nil
 			}
+			atomic.AddInt64(&dispatched, 1)
 			workCh <- s
 			return nil
 		})
 	}); err != nil {
 		logger.Errorf("jav-refine-cron: batch process error: %v", err)
 	}
+
+	// Set total to the actual number of scenes dispatched so the progress
+	// bar accurately reflects work done.
+	progress.SetTotal(int(dispatched))
 
 	close(workCh)
 	wg.Wait()
