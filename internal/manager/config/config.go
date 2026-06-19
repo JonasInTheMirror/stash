@@ -55,8 +55,9 @@ const (
 
 	AutomationCloudPull       = "automation.cloud_pull"
 	AutomationCloudPush       = "automation.cloud_push"
-	AutomationStartupScan     = "automation.startup_scan"
-	AutomationStartupIdentify = "automation.startup_identify"
+	AutomationStartupScan                = "automation.startup_scan"
+	AutomationStartupIdentify            = "automation.startup_identify"
+	AutomationStartupIdentifyProcessOrganized = "automation.startup_identify_process_organized"
 
 
 	// SFWContentMode mode config key
@@ -1899,6 +1900,14 @@ func (i *Config) GetAutomationStartupIdentify() bool {
 	return i.getBoolDefault(AutomationStartupIdentify, true)
 }
 
+func (i *Config) GetAutomationStartupIdentifyProcessOrganized() bool {
+	return i.getBoolDefault(AutomationStartupIdentifyProcessOrganized, false)
+}
+
+
+
+
+
 
 
 // ActivatePublicAccessTripwire sets the security_tripwire_accessed_from_public_internet
@@ -2055,6 +2064,7 @@ func (i *Config) setDefaultValues() {
 	i.setDefault(AutomationCloudPush, true)
 	i.setDefault(AutomationStartupScan, true)
 	i.setDefault(AutomationStartupIdentify, true)
+	i.setDefault(AutomationStartupIdentifyProcessOrganized, false)
 
 
 	// set default package sources

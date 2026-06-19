@@ -84,9 +84,10 @@ func (j *StartupJob) Execute(ctx context.Context, progress *job.Progress) error 
 			}
 		}
 
-		// Startup identify always processes organized scenes — it's a fresh
-		// run, not a re-identify gate. This is independent of scan's Rescan.
-		identifyOptions.ProcessOrganized = &[]bool{true}[0]
+		// Startup identify uses its own setting, independent of the main
+		// identify dialog's "skip organized" toggle.
+		processOrganized := cfg.GetAutomationStartupIdentifyProcessOrganized()
+		identifyOptions.ProcessOrganized = &processOrganized
 
 		identifyJob := CreateIdentifyJob(*identifyOptions)
 		if err := identifyJob.Execute(ctx, progress); err != nil {

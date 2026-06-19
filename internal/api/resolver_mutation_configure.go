@@ -489,6 +489,7 @@ func (r *mutationResolver) ConfigureAutomation(ctx context.Context, input Config
 	r.setConfigBool(config.AutomationCloudPush, input.CloudPush)
 	r.setConfigBool(config.AutomationStartupScan, input.StartupScan)
 	r.setConfigBool(config.AutomationStartupIdentify, input.StartupIdentify)
+	r.setConfigBool(config.AutomationStartupIdentifyProcessOrganized, input.StartupIdentifyProcessOrganized)
 
 
 	if err := c.Write(); err != nil {
@@ -507,6 +508,7 @@ func (r *mutationResolver) ConfigureAutomation(ctx context.Context, input Config
 			{config.AutomationCloudPush, fmt.Sprintf("%v", c.GetAutomationCloudPush())},
 			{config.AutomationStartupScan, fmt.Sprintf("%v", c.GetAutomationStartupScan())},
 			{config.AutomationStartupIdentify, fmt.Sprintf("%v", c.GetAutomationStartupIdentify())},
+			{config.AutomationStartupIdentifyProcessOrganized, fmt.Sprintf("%v", c.GetAutomationStartupIdentifyProcessOrganized())},
 		}
 		for _, p := range pairs {
 			_ = repo.AppSettings.SetSetting(ctx, p.k, p.v)

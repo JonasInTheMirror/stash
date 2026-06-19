@@ -75,6 +75,15 @@ export const SettingsAutomationPanel: React.FC = () => {
                   checked={automation.startupIdentify ?? true}
                   onChange={(v) => saveAutomation({ startupIdentify: v })}
                 />
+                <BooleanSetting
+                  id="automation-startup-identify-process-organized"
+                  headingID="Skip organized scenes"
+                  subHeadingID="Skip scenes already marked as organized during startup identify."
+                  checked={!automation.startupIdentifyProcessOrganized}
+                  onChange={(v) =>
+                    saveAutomation({ startupIdentifyProcessOrganized: !v })
+                  }
+                />
               </Card.Body>
             </Card>
           </Col>

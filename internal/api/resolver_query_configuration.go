@@ -155,10 +155,11 @@ func makeConfigAutomationResult() *ConfigAutomationResult {
 		CloudSyncAutoPush:       config.GetCloudSyncAutoPush(),
 		CloudPull:               config.GetAutomationCloudPull(),
 		CloudPush:               config.GetAutomationCloudPush(),
-		StartupScan:             config.GetAutomationStartupScan(),
-		StartupIdentify:         config.GetAutomationStartupIdentify(),
+		StartupScan:                     config.GetAutomationStartupScan(),
+		StartupIdentify:                 config.GetAutomationStartupIdentify(),
+		StartupIdentifyProcessOrganized: config.GetAutomationStartupIdentifyProcessOrganized(),
 	}
-	logger.Infof("Automation Config: URL=%s, Key=%s, Bucket=%s, AutoPush=%v, Pull=%v, Push=%v, Scan=%v, ID=%v",
+	logger.Infof("Automation Config: URL=%s, Key=%s, Bucket=%s, AutoPush=%v, Pull=%v, Push=%v, Scan=%v, ID=%v, IDProcessOrg=%v",
 		res.CloudSyncSupabaseURL, "REDACTED", res.CloudSyncSupabaseBucket, res.CloudSyncAutoPush,
 		res.CloudPull, res.CloudPush, res.StartupScan, res.StartupIdentify)
 	return res

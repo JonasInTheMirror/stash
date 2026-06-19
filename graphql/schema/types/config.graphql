@@ -614,6 +614,7 @@ input ConfigAutomationInput {
   cloudPush: Boolean
   startupScan: Boolean
   startupIdentify: Boolean
+  startupIdentifyProcessOrganized: Boolean
 }
 
 type ConfigAutomationResult {
@@ -625,6 +626,7 @@ type ConfigAutomationResult {
   cloudPush: Boolean!
   startupScan: Boolean!
   startupIdentify: Boolean!
+  startupIdentifyProcessOrganized: Boolean!
 }
 
 
