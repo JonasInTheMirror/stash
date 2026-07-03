@@ -15,7 +15,6 @@ import (
 	"github.com/stashapp/stash/pkg/ffmpeg"
 	"github.com/stashapp/stash/pkg/ffmpeg/transcoder"
 	"github.com/stashapp/stash/pkg/fsutil"
-	"github.com/stashapp/stash/pkg/logger"
 	"github.com/stashapp/stash/pkg/utils"
 )
 
@@ -35,16 +34,69 @@ func (g Generator) SpriteScreenshot(ctx context.Context, input string, seconds f
 	}
 
 	args := transcoder.ScreenshotTime(input, seconds, ssOptions)
-	img, err := g.generateImage(lockCtx, args)
-	if err != nil {
-		logger.Warnf("[generator] fast sprite screenshot seek failed for %s at %.3fs, retrying with accurate seek: %v", input, seconds, err)
+	return g.generateImage(lockCtx, args)
+}
 
-		ssOptions.SlowSeek = true
-		args = transcoder.ScreenshotTime(input, seconds, ssOptions)
-		return g.generateImage(lockCtx, args)
+// SpriteScreenshotsBatch generates count screenshots spaced interval seconds
+// apart using a single sequential decode of the input. It is used as a
+// fallback when fast (input) seeking fails, where retrying every frame with
+// an accurate seek would decode the entire file once per frame.
+func (g Generator) SpriteScreenshotsBatch(ctx context.Context, input string, interval float64, count int, size int, isPortrait bool) ([]image.Image, error) {
+	if interval <= 0 || count <= 0 {
+		return nil, fmt.Errorf("invalid sprite batch parameters: interval=%f count=%d", interval, count)
 	}
 
-	return img, nil
+	lockCtx := g.LockManager.ReadLock(ctx, input)
+	defer lockCtx.Cancel()
+
+	tmpDir, err := os.MkdirTemp("", "stash-sprite-batch-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	ssOptions := transcoder.ScreenshotBatchOptions{
+		OutputPattern: filepath.Join(tmpDir, "%05d.bmp"),
+		OutputType:    transcoder.ScreenshotOutputTypeImage2,
+		Interval:      interval,
+		MaxFrames:     count,
+	}
+
+	if !isPortrait {
+		ssOptions.Width = size
+	} else {
+		ssOptions.Height = size
+	}
+
+	args := transcoder.ScreenshotBatch(input, ssOptions)
+	if err := g.generate(lockCtx, args); err != nil {
+		return nil, fmt.Errorf("generating sprite batch for %s: %w", input, err)
+	}
+
+	var images []image.Image
+	for i := 1; i <= count; i++ {
+		f, err := os.Open(filepath.Join(tmpDir, fmt.Sprintf("%05d.bmp", i)))
+		if err != nil {
+			break
+		}
+		img, _, err := image.Decode(f)
+		f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("decoding sprite batch image %d for %s: %w", i, input, err)
+		}
+		images = append(images, img)
+	}
+
+	if len(images) == 0 {
+		return nil, fmt.Errorf("sprite batch produced no images for %s", input)
+	}
+
+	// pad with the last frame if the video ended before count frames
+	for len(images) < count {
+		images = append(images, images[len(images)-1])
+	}
+
+	return images, nil
 }
 
 func (g Generator) SpriteScreenshotSlow(ctx context.Context, input string, frame int, width int) (image.Image, error) {

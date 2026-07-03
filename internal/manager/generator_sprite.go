@@ -211,7 +211,17 @@ func (g *SpriteGenerator) generateSpriteImage() error {
 			time := float64(i) * stepSize
 			img, err := g.g.SpriteScreenshot(context.TODO(), g.Info.VideoFile.Path, time, g.Config.SpriteSize, isPortrait)
 			if err != nil {
-				return err
+				// fast seeking is unreliable for this file. Rather than
+				// retrying every frame with an accurate seek (which decodes
+				// the entire file once per frame), generate all frames in a
+				// single sequential decode pass.
+				logger.Warnf("[generator] fast sprite screenshot seek failed for %s at %.3fs, falling back to single-pass generation: %v", g.Info.VideoFile.Path, time, err)
+
+				images, err = g.g.SpriteScreenshotsBatch(context.TODO(), g.Info.VideoFile.Path, stepSize, g.Info.ChunkCount, g.Config.SpriteSize, isPortrait)
+				if err != nil {
+					return err
+				}
+				break
 			}
 			images = append(images, img)
 		}

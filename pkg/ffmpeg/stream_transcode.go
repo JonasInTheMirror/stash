@@ -147,6 +147,10 @@ type TranscodeOptions struct {
 	VideoFile  *models.VideoFile
 	Resolution string
 	StartTime  float64
+	// ForceReencode skips stream copy even when the source codec matches the
+	// output container. Used when the client cannot decode the original
+	// bitstream smoothly and needs a clean re-encode.
+	ForceReencode bool
 }
 
 func (o TranscodeOptions) FileGetCodec(sm *StreamManager, maxTranscodeSize int) (codec VideoCodec) {
@@ -162,7 +166,7 @@ func (o TranscodeOptions) FileGetCodec(sm *StreamManager, maxTranscodeSize int) 
 
 	switch o.StreamType.MimeType {
 	case MimeMp4Video:
-		if !needsResize && o.VideoFile.VideoCodec == H264 {
+		if !o.ForceReencode && !needsResize && o.VideoFile.VideoCodec == H264 {
 			return VideoCodecCopy
 		}
 		codec = VideoCodecLibX264
@@ -170,7 +174,7 @@ func (o TranscodeOptions) FileGetCodec(sm *StreamManager, maxTranscodeSize int) 
 			codec = *hwcodec
 		}
 	case MimeWebmVideo:
-		if !needsResize && (o.VideoFile.VideoCodec == Vp8 || o.VideoFile.VideoCodec == Vp9) {
+		if !o.ForceReencode && !needsResize && (o.VideoFile.VideoCodec == Vp8 || o.VideoFile.VideoCodec == Vp9) {
 			return VideoCodecCopy
 		}
 		codec = VideoCodecVP9

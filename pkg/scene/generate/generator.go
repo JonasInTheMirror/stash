@@ -137,6 +137,8 @@ func (g Generator) generate(ctx *fsutil.LockContext, args []string) error {
 		return fmt.Errorf("error starting command: %w", err)
 	}
 
+	setBackgroundPriority(cmd)
+
 	ctx.AttachCommand(cmd)
 
 	if err := cmd.Wait(); err != nil {
@@ -164,6 +166,8 @@ func (g Generator) generateOutput(lockCtx *fsutil.LockContext, args []string) ([
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("error starting command: %w", err)
 	}
+
+	setBackgroundPriority(cmd)
 
 	lockCtx.AttachCommand(cmd)
 

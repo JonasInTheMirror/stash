@@ -1,6 +1,10 @@
 package transcoder
 
-import "github.com/stashapp/stash/pkg/ffmpeg"
+import (
+	"fmt"
+
+	"github.com/stashapp/stash/pkg/ffmpeg"
+)
 
 type ScreenshotOptions struct {
 	OutputPath string
@@ -89,6 +93,60 @@ func ScreenshotTime(input string, t float64, options ScreenshotOptions) ffmpeg.A
 
 	args = args.AppendArgs(options.OutputType)
 	args = args.Output(options.OutputPath)
+
+	return args
+}
+
+type ScreenshotBatchOptions struct {
+	// OutputPattern is the image2 output pattern, e.g. /tmp/dir/%05d.bmp
+	OutputPattern string
+	OutputType    ScreenshotOutputType
+
+	// Interval is the time in seconds between captured frames.
+	Interval float64
+
+	// MaxFrames caps the number of frames captured. If 0, no cap is applied.
+	MaxFrames int
+
+	// Width is the width to scale the screenshots to. If 0, no scaling will be applied.
+	Width int
+	// Height is the height to scale the screenshots to. If 0, no scaling will be applied.
+	// Not used if Width is set.
+	Height int
+
+	// Verbosity is the logging verbosity. Defaults to LogLevelError if not set.
+	Verbosity ffmpeg.LogLevel
+}
+
+// ScreenshotBatch captures a frame every Interval seconds in a single
+// sequential decode pass. It is far cheaper than repeated accurate seeks
+// for files where fast (input) seeking is unreliable.
+func ScreenshotBatch(input string, options ScreenshotBatchOptions) ffmpeg.Args {
+	if options.Verbosity == "" {
+		options.Verbosity = ffmpeg.LogLevelError
+	}
+
+	var args ffmpeg.Args
+	args = args.LogLevel(options.Verbosity)
+	args = args.Overwrite()
+	args = args.ErrDetectIgnore()
+	args = args.Input(input)
+
+	if options.MaxFrames > 0 {
+		args = args.VideoFrames(options.MaxFrames)
+	}
+
+	var vf ffmpeg.VideoFilter
+	vf = vf.Append(fmt.Sprintf("fps=1/%f", options.Interval))
+	if options.Width > 0 {
+		vf = vf.ScaleWidth(options.Width)
+	} else if options.Height > 0 {
+		vf = vf.ScaleHeight(options.Height)
+	}
+	args = args.VideoFilter(vf)
+
+	args = args.AppendArgs(options.OutputType)
+	args = args.Output(options.OutputPattern)
 
 	return args
 }

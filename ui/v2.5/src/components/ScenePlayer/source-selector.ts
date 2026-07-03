@@ -100,6 +100,15 @@ class SourceMenuButton extends videojs.getComponent("MenuButton") {
   }
 }
 
+// Dropped-frame watchdog tuning. Some files direct-play but decode poorly in
+// the browser (dropped frames) while re-encoded streams play smoothly.
+const QUALITY_SAMPLE_INTERVAL = 2000; // ms between quality samples
+const QUALITY_WINDOW_SAMPLES = 4; // rolling window = 4 samples (~8s)
+const QUALITY_WARMUP_SAMPLES = 2; // ignore initial samples (~4s)
+const QUALITY_DROP_THRESHOLD = 0.1; // switch when >10% frames dropped
+const QUALITY_MIN_WINDOW_FRAMES = 60; // require enough frames to judge
+const QUALITY_MAX_AUTO_SWITCHES = 2; // stop trying after this many switches
+
 class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
   private menu: SourceMenuButton;
   private sources: ISource[] = [];
@@ -109,6 +118,11 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
 
   // don't auto play next source if user manually selected a source
   private manuallySelected = false;
+
+  // dropped-frame watchdog state
+  private qualityTimer: number | undefined;
+  private qualitySamples: { total: number; dropped: number }[] = [];
+  private autoQualitySwitches = 0;
 
   constructor(player: VideoJsPlayer) {
     super(player);
@@ -207,6 +221,167 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
         console.log("No more sources in playlist");
       }
     });
+
+    player.on("playing", () => this.startQualityWatchdog());
+    player.on(["pause", "seeking", "waiting", "loadstart"], () =>
+      this.resetQualityWatchdog()
+    );
+    player.on("dispose", () => this.stopQualityWatchdog());
+  }
+
+  // The dropped-frame watchdog detects sources that the browser decodes
+  // poorly (e.g. bitstreams that break hardware decoding) and switches to a
+  // re-encoded stream, which plays smoothly.
+  private startQualityWatchdog() {
+    if (this.qualityTimer !== undefined) return;
+    if (this.autoQualitySwitches >= QUALITY_MAX_AUTO_SWITCHES) return;
+    // respect explicit user choice, same as the error fallback
+    if (this.manuallySelected) return;
+
+    this.qualitySamples = [];
+    this.qualityTimer = window.setInterval(
+      () => this.checkQuality(),
+      QUALITY_SAMPLE_INTERVAL
+    );
+  }
+
+  private resetQualityWatchdog() {
+    // discard samples spanning a seek/stall/source change, they misreport
+    this.stopQualityWatchdog();
+    if (!this.player.paused()) {
+      this.startQualityWatchdog();
+    }
+  }
+
+  private stopQualityWatchdog() {
+    if (this.qualityTimer !== undefined) {
+      window.clearInterval(this.qualityTimer);
+      this.qualityTimer = undefined;
+    }
+    this.qualitySamples = [];
+  }
+
+  private currentVideoElement(): HTMLVideoElement | null {
+    return this.player.el()?.querySelector("video") ?? null;
+  }
+
+  private checkQuality() {
+    const video = this.currentVideoElement();
+    if (!video || typeof video.getVideoPlaybackQuality !== "function") {
+      this.stopQualityWatchdog();
+      return;
+    }
+
+    const q = video.getVideoPlaybackQuality();
+    this.qualitySamples.push({
+      total: q.totalVideoFrames,
+      dropped: q.droppedVideoFrames,
+    });
+
+    if (this.qualitySamples.length < QUALITY_WARMUP_SAMPLES + 2) return;
+    if (
+      this.qualitySamples.length >
+      QUALITY_WARMUP_SAMPLES + QUALITY_WINDOW_SAMPLES
+    ) {
+      this.qualitySamples.splice(
+        0,
+        this.qualitySamples.length -
+          (QUALITY_WARMUP_SAMPLES + QUALITY_WINDOW_SAMPLES)
+      );
+    }
+
+    const first = this.qualitySamples[0];
+    const last = this.qualitySamples[this.qualitySamples.length - 1];
+    const windowTotal = last.total - first.total;
+    const windowDropped = last.dropped - first.dropped;
+
+    if (windowTotal < QUALITY_MIN_WINDOW_FRAMES) return;
+
+    const dropRatio = windowDropped / windowTotal;
+    if (dropRatio <= QUALITY_DROP_THRESHOLD) return;
+
+    console.log(
+      `Playback dropping frames (${(dropRatio * 100).toFixed(1)}% over last ${
+        windowTotal
+      } frames), switching to a transcoded stream`
+    );
+    this.switchForQuality();
+  }
+
+  // Whether the current source serves the original video bitstream: the
+  // direct stream, or an MP4/WebM "transcode" that stream-copies when the
+  // codec already matches (no reencode flag).
+  private servesOriginalBitstream(src: string): boolean {
+    try {
+      const url = new URL(src, window.location.origin);
+      if (url.pathname.endsWith("/stream")) return true;
+      if (
+        url.pathname.endsWith("/stream.mp4") ||
+        url.pathname.endsWith("/stream.webm")
+      ) {
+        return url.searchParams.get("reencode") !== "true";
+      }
+    } catch {
+      // ignore unparsable URLs
+    }
+    return false;
+  }
+
+  private switchForQuality() {
+    this.stopQualityWatchdog();
+
+    const currentSource = this.player.currentSource() as ISource;
+    if (!this.servesOriginalBitstream(currentSource.src)) {
+      // already on a re-encoded stream and still dropping frames -
+      // switching again won't help
+      this.autoQualitySwitches = QUALITY_MAX_AUTO_SWITCHES;
+      return;
+    }
+
+    // prefer HLS/DASH (always re-encoded, segment-cached and seekable),
+    // then fall back to a forced re-encode of the piped MP4 stream
+    let newSource = this.sources.find(
+      (s) =>
+        !s.errored &&
+        s.src !== currentSource.src &&
+        (s.src.includes(".m3u8") || s.src.includes(".mpd"))
+    );
+
+    if (!newSource) {
+      const mp4 = this.sources.find(
+        (s) => !s.errored && s.src.includes("stream.mp4")
+      );
+      if (mp4) {
+        const url = new URL(mp4.src, window.location.origin);
+        url.searchParams.set("reencode", "true");
+        newSource = { ...mp4, src: url.toString() };
+      }
+    }
+
+    if (!newSource) {
+      console.log("No re-encoded source available to switch to");
+      this.autoQualitySwitches = QUALITY_MAX_AUTO_SWITCHES;
+      return;
+    }
+
+    this.autoQualitySwitches += 1;
+
+    const newIndex = this.sources.indexOf(newSource);
+    if (newIndex !== -1) {
+      this.selectedIndex = newIndex;
+      this.menu.setSelectedSource(newSource);
+    }
+
+    console.log(`Switching to source: '${newSource.label}'`);
+
+    const player = this.player;
+    const currentTime = player.currentTime();
+    player.src(newSource);
+    player.load();
+    player.one("canplay", () => {
+      player.currentTime(currentTime);
+    });
+    player.play();
   }
 
   setSources(sources: ISource[]) {
@@ -214,6 +389,10 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
     for (const track of cleanupTracks) {
       this.player.removeRemoteTextTrack(track);
     }
+
+    this.stopQualityWatchdog();
+    this.autoQualitySwitches = 0;
+    this.manuallySelected = false;
 
     this.menu.setSources(sources);
     if (sources.length !== 0) {

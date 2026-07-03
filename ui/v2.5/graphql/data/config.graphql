@@ -196,6 +196,7 @@ fragment ConfigDefaultSettingsData on ConfigDefaultSettingsResult {
     options {
       ...IdentifyMetadataOptionsData
     }
+    processOrganized
   }
 
   autoTag {
