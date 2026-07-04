@@ -9,6 +9,7 @@ fragment SlimSceneData on Scene {
   rating100
   o_counter
   organized
+  requires_reencode
   interactive
   interactive_speed
   resume_time

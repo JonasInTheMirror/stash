@@ -211,6 +211,20 @@ func GetSceneStreamPaths(scene *models.Scene, directStreamURL *url.URL, maxStrea
 		dashStreams = append(dashStreams, makeStreamEndpoint(dashEndpointType, models.StreamingResolutionEnumLow))
 	}
 
+	if scene.RequiresReencode {
+		// the original bitstream is known to play poorly in browsers -
+		// list re-encoded streams first so playback starts in the right
+		// mode immediately. The direct/copy streams remain available for
+		// manual selection.
+		reordered := []*SceneStreamEndpoint{}
+		reordered = append(reordered, hlsStreams...)
+		reordered = append(reordered, dashStreams...)
+		reordered = append(reordered, endpoints...)
+		reordered = append(reordered, mp4Streams...)
+		reordered = append(reordered, webmStreams...)
+		return reordered, nil
+	}
+
 	endpoints = append(endpoints, mp4Streams...)
 	endpoints = append(endpoints, webmStreams...)
 	endpoints = append(endpoints, hlsStreams...)

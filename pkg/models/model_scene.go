@@ -19,7 +19,10 @@ type Scene struct {
 	// Rating expressed in 1-100 scale
 	Rating    *int `json:"rating"`
 	Organized bool `json:"organized"`
-	StudioID  *int `json:"studio_id"`
+	// RequiresReencode indicates the original bitstream plays poorly in
+	// browsers, so re-encoded streams should be preferred for playback.
+	RequiresReencode bool `json:"requires_reencode"`
+	StudioID         *int `json:"studio_id"`
 
 	// transient - not persisted
 	Files         RelatedVideoFiles
@@ -76,9 +79,10 @@ type ScenePartial struct {
 	Director OptionalString
 	Date     OptionalDate
 	// Rating expressed in 1-100 scale
-	Rating       OptionalInt
-	Organized    OptionalBool
-	StudioID     OptionalInt
+	Rating           OptionalInt
+	Organized        OptionalBool
+	RequiresReencode OptionalBool
+	StudioID         OptionalInt
 	CreatedAt    OptionalTime
 	UpdatedAt    OptionalTime
 	ResumeTime   OptionalFloat64

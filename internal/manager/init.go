@@ -236,8 +236,12 @@ func (s *Manager) postInit(ctx context.Context) error {
 		}
 	}
 
-	if err := s.loadAppSettingsIntoConfig(ctx); err != nil {
-		logger.Warnf("could not load app settings from DB: %v", err)
+	// app settings can only be loaded once the database is open - skip when
+	// a schema migration is pending, the database is not usable yet
+	if s.Database.Ready() == nil {
+		if err := s.loadAppSettingsIntoConfig(ctx); err != nil {
+			logger.Warnf("could not load app settings from DB: %v", err)
+		}
 	}
 
 	// Set the proxy if defined in config

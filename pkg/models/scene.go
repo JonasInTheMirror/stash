@@ -212,6 +212,7 @@ type SceneUpdateInput struct {
 	Rating100        *int              `json:"rating100"`
 	OCounter         *int              `json:"o_counter"`
 	Organized        *bool             `json:"organized"`
+	RequiresReencode *bool             `json:"requires_reencode"`
 	StudioID         *string           `json:"studio_id"`
 	GalleryIds       []string          `json:"gallery_ids"`
 	PerformerIds     []string          `json:"performer_ids"`

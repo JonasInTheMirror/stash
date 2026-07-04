@@ -29,6 +29,7 @@ import cx from "classnames";
 import {
   useSceneSaveActivity,
   useSceneIncrementPlayCount,
+  useSceneUpdate,
   useConfigureInterface,
 } from "src/core/StashService";
 
@@ -251,6 +252,7 @@ export const ScenePlayer: React.FC<IScenePlayerProps> = PatchComponent(
     const sceneId = useRef<string>();
     const [sceneSaveActivity] = useSceneSaveActivity();
     const [sceneIncrementPlayCount] = useSceneIncrementPlayCount();
+    const [updateScene] = useSceneUpdate();
     const [updateInterfaceConfig] = useConfigureInterface();
 
     const [time, setTime] = useState(0);
@@ -645,6 +647,19 @@ export const ScenePlayer: React.FC<IScenePlayerProps> = PatchComponent(
           })
       );
 
+      // persist the watchdog's decision so future playbacks of this scene
+      // start on a re-encoded stream immediately
+      sourceSelector.setQualityFallbackHandler(() => {
+        if (scene.requires_reencode) return;
+        updateScene({
+          variables: {
+            input: { id: scene.id, requires_reencode: true },
+          },
+        }).catch((err) =>
+          console.error("Failed to persist requires_reencode flag", err)
+        );
+      });
+
       function getDefaultLanguageCode() {
         let languageCode = window.navigator.language;
 
@@ -734,6 +749,7 @@ export const ScenePlayer: React.FC<IScenePlayerProps> = PatchComponent(
       uiConfig?.alwaysStartFromBeginning,
       uiConfig?.disableMobileMediaAutoRotateEnabled,
       _initialTimestamp,
+      updateScene,
     ]);
 
     useEffect(() => {

@@ -102,11 +102,12 @@ class SourceMenuButton extends videojs.getComponent("MenuButton") {
 
 // Dropped-frame watchdog tuning. Some files direct-play but decode poorly in
 // the browser (dropped frames) while re-encoded streams play smoothly.
-const QUALITY_SAMPLE_INTERVAL = 2000; // ms between quality samples
-const QUALITY_WINDOW_SAMPLES = 4; // rolling window = 4 samples (~8s)
-const QUALITY_WARMUP_SAMPLES = 2; // ignore initial samples (~4s)
+const QUALITY_SAMPLE_INTERVAL = 500; // ms between quality samples
+const QUALITY_WINDOW_SAMPLES = 8; // rolling window = 8 samples (~4s)
+const QUALITY_WARMUP_SAMPLES = 1; // ignore initial samples (~0.5s)
 const QUALITY_DROP_THRESHOLD = 0.1; // switch when >10% frames dropped
-const QUALITY_MIN_WINDOW_FRAMES = 60; // require enough frames to judge
+const QUALITY_MIN_WINDOW_FRAMES = 30; // require enough frames to judge (~1s)
+const QUALITY_CONSECUTIVE_TRIGGERS = 2; // debounce: consecutive over-threshold checks
 const QUALITY_MAX_AUTO_SWITCHES = 2; // stop trying after this many switches
 
 class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
@@ -123,6 +124,10 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
   private qualityTimer: number | undefined;
   private qualitySamples: { total: number; dropped: number }[] = [];
   private autoQualitySwitches = 0;
+  private qualityOverThresholdCount = 0;
+  // invoked when the watchdog switches away from an original-bitstream
+  // source, so the decision can be persisted
+  private qualityFallbackHandler: (() => void) | undefined;
 
   constructor(player: VideoJsPlayer) {
     super(player);
@@ -239,10 +244,15 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
     if (this.manuallySelected) return;
 
     this.qualitySamples = [];
+    this.qualityOverThresholdCount = 0;
     this.qualityTimer = window.setInterval(
       () => this.checkQuality(),
       QUALITY_SAMPLE_INTERVAL
     );
+  }
+
+  setQualityFallbackHandler(handler: (() => void) | undefined) {
+    this.qualityFallbackHandler = handler;
   }
 
   private resetQualityWatchdog() {
@@ -298,7 +308,15 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
     if (windowTotal < QUALITY_MIN_WINDOW_FRAMES) return;
 
     const dropRatio = windowDropped / windowTotal;
-    if (dropRatio <= QUALITY_DROP_THRESHOLD) return;
+    if (dropRatio <= QUALITY_DROP_THRESHOLD) {
+      this.qualityOverThresholdCount = 0;
+      return;
+    }
+
+    // debounce: require consecutive over-threshold checks so a single
+    // momentary hiccup doesn't trigger a switch
+    this.qualityOverThresholdCount += 1;
+    if (this.qualityOverThresholdCount < QUALITY_CONSECUTIVE_TRIGGERS) return;
 
     console.log(
       `Playback dropping frames (${(dropRatio * 100).toFixed(1)}% over last ${
@@ -374,6 +392,9 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
 
     console.log(`Switching to source: '${newSource.label}'`);
 
+    // persist the decision (e.g. set the scene's requires_reencode flag)
+    this.qualityFallbackHandler?.();
+
     const player = this.player;
     const currentTime = player.currentTime();
     player.src(newSource);
@@ -393,6 +414,7 @@ class SourceSelectorPlugin extends videojs.getPlugin("plugin") {
     this.stopQualityWatchdog();
     this.autoQualitySwitches = 0;
     this.manuallySelected = false;
+    this.qualityFallbackHandler = undefined;
 
     this.menu.setSources(sources);
     if (sources.length !== 0) {

@@ -48,6 +48,8 @@ type Scene {
   # rating expressed as 1-100
   rating100: Int
   organized: Boolean!
+  "True when the original bitstream plays poorly in browsers and re-encoded streams should be preferred"
+  requires_reencode: Boolean!
   o_counter: Int
   interactive: Boolean!
   interactive_speed: Int
@@ -141,6 +143,7 @@ input SceneUpdateInput {
   o_counter: Int
     @deprecated(reason: "Unsupported - Use sceneIncrementO/sceneDecrementO")
   organized: Boolean
+  requires_reencode: Boolean
   studio_id: ID
   gallery_ids: [ID!]
   performer_ids: [ID!]

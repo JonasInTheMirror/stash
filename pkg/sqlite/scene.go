@@ -50,9 +50,10 @@ type sceneRow struct {
 	Date          NullDate    `db:"date"`
 	DatePrecision null.Int    `db:"date_precision"`
 	// expressed as 1-100
-	Rating       null.Int  `db:"rating"`
-	Organized    bool      `db:"organized"`
-	StudioID     null.Int  `db:"studio_id,omitempty"`
+	Rating           null.Int  `db:"rating"`
+	Organized        bool      `db:"organized"`
+	RequiresReencode bool      `db:"requires_reencode"`
+	StudioID         null.Int  `db:"studio_id,omitempty"`
 	CreatedAt    Timestamp `db:"created_at"`
 	UpdatedAt    Timestamp `db:"updated_at"`
 	ResumeTime   float64   `db:"resume_time"`
@@ -72,6 +73,7 @@ func (r *sceneRow) fromScene(o models.Scene) {
 	r.DatePrecision = datePrecisionFromDatePtr(o.Date)
 	r.Rating = intFromPtr(o.Rating)
 	r.Organized = o.Organized
+	r.RequiresReencode = o.RequiresReencode
 	r.StudioID = intFromPtr(o.StudioID)
 	r.CreatedAt = Timestamp{Timestamp: o.CreatedAt}
 	r.UpdatedAt = Timestamp{Timestamp: o.UpdatedAt}
@@ -97,8 +99,9 @@ func (r *sceneQueryRow) resolve() *models.Scene {
 		Director:  r.Director.String,
 		Date:      r.Date.DatePtr(r.DatePrecision),
 		Rating:    nullIntPtr(r.Rating),
-		Organized: r.Organized,
-		StudioID:  nullIntPtr(r.StudioID),
+		Organized:        r.Organized,
+		RequiresReencode: r.RequiresReencode,
+		StudioID:         nullIntPtr(r.StudioID),
 
 		PrimaryFileID: nullIntFileIDPtr(r.PrimaryFileID),
 		OSHash:        r.PrimaryFileOshash.String,
@@ -130,6 +133,7 @@ func (r *sceneRowRecord) fromPartial(o models.ScenePartial) {
 	r.setNullDate("date", "date_precision", o.Date)
 	r.setNullInt("rating", o.Rating)
 	r.setBool("organized", o.Organized)
+	r.setBool("requires_reencode", o.RequiresReencode)
 	r.setNullInt("studio_id", o.StudioID)
 	r.setTimestamp("created_at", o.CreatedAt)
 	r.setTimestamp("updated_at", o.UpdatedAt)

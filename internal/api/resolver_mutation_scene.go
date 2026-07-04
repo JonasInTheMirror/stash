@@ -199,6 +199,7 @@ func scenePartialFromInput(input models.SceneUpdateInput, translator changesetTr
 
 	updatedScene.PlayDuration = translator.optionalFloat64(input.PlayDuration, "play_duration")
 	updatedScene.Organized = translator.optionalBool(input.Organized, "organized")
+	updatedScene.RequiresReencode = translator.optionalBool(input.RequiresReencode, "requires_reencode")
 	updatedScene.StashIDs = translator.updateStashIDs(input.StashIds, "stash_ids")
 
 	var err error
